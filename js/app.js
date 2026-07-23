@@ -1,107 +1,206 @@
 // ================================================================
-// app.js — 三文鱼养殖投喂管理系统 主应用
+// app.js — 三文鱼养殖投喂管理系统 v2.1
+// 新增: 实时验证 + pH/氨氮修正 + Toast通知
 // ================================================================
 
-// ============ 全局状态 ============
-let records = [];
-let charts = {};
+let records = [], charts = {};
 
 // ============ Tab 切换 ============
 function switchTab(name) {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-  document.getElementById('tab-' + name).classList.add('active');
-  const btns = document.querySelectorAll('nav button');
-  const tabNames = ['calculator', 'records', 'dashboard', 'knowledge', 'chatbot'];
-  const idx = tabNames.indexOf(name);
-  if (idx >= 0 && btns[idx]) btns[idx].classList.add('active');
+  const el = document.getElementById('tab-' + name);
+  if (el) el.classList.add('active');
+  const idx = ['calculator','records','dashboard','knowledge','chatbot'].indexOf(name);
+  if (idx >= 0) document.querySelectorAll('nav button')[idx].classList.add('active');
   if (name === 'dashboard') renderDashboard();
   if (name === 'knowledge') renderKnowledgeTab();
   if (name === 'records') renderRecords();
+  if (name === 'calculator') validateParams();
 }
 
-// ============ 投喂计算 (三法对比) ============
+// ============ 参数阈值 ============
+const LIMITS = {
+  avgWeight: { min: 1, max: 5000, label: '体重', unit: 'g' },
+  count: { min: 1, max: 999999, label: '数量', unit: '尾' },
+  waterTemp: { min: 2, max: 22, label: '水温', unit: '℃', optimal: [12, 18] },
+  doLevel: { min: 0, max: 20, label: '溶氧', unit: 'mg/L', warn: 7, crit: 4, ok: 9 },
+  ph: { min: 6, max: 8, label: 'pH', unit: '', optimal: [7, 7.5] },
+  ammonia: { min: 0, max: 2, label: '氨氮', unit: 'mg/L', warn: 0.2, crit: 0.6 },
+};
+
+function validateParams() {
+  const statusEl = document.getElementById('paramStatus');
+  const alertEl = document.getElementById('alertBox');
+  const liveWarn = document.getElementById('liveWarnings');
+  const issues = [];
+  let hasCritical = false, hasWarning = false;
+
+  Object.keys(LIMITS).forEach(key => {
+    const el = document.getElementById(key);
+    if (!el) return;
+    const val = parseFloat(el.value);
+    const lim = LIMITS[key];
+    el.classList.remove('invalid', 'warning-input', 'valid');
+    if (isNaN(val)) return;
+
+    if (val < lim.min || val > lim.max) {
+      el.classList.add('invalid');
+      issues.push({ type: 'crit', msg: `🚫 ${lim.label}: ${val}${lim.unit} 超出允许范围 [${lim.min}~${lim.max}${lim.unit}]` });
+      hasCritical = true;
+    } else if (lim.crit !== undefined && val <= lim.crit) {
+      el.classList.add('invalid');
+      issues.push({ type: 'crit', msg: `🚨 ${lim.label}: ${val}${lim.unit} 已达危险水平 (临界: ${lim.crit}${lim.unit})` });
+      hasCritical = true;
+    } else if (lim.warn !== undefined && val < lim.warn) {
+      el.classList.add('warning-input');
+      issues.push({ type: 'warn', msg: `⚡ ${lim.label}: ${val}${lim.unit} 低于推荐 (≥${lim.warn}${lim.unit})` });
+      hasWarning = true;
+    } else if (lim.optimal && (val < lim.optimal[0] || val > lim.optimal[1])) {
+      el.classList.add('warning-input');
+      issues.push({ type: 'info', msg: `💡 ${lim.label}: ${val}${lim.unit} 偏离最佳 [${lim.optimal[0]}~${lim.optimal[1]}${lim.unit}]` });
+    } else {
+      el.classList.add('valid');
+    }
+  });
+
+  if (hasCritical) {
+    statusEl.textContent = '🔴 存在严重参数异常'; statusEl.style.color = '#e74c3c';
+    alertEl.style.display = 'block'; alertEl.innerHTML = issues.filter(i => i.type === 'crit').map(i => i.msg).join('<br>');
+    document.getElementById('calcBtn').disabled = true;
+  } else if (hasWarning) {
+    statusEl.textContent = '🟡 部分参数需关注'; statusEl.style.color = '#e67e22';
+    alertEl.style.display = 'block'; alertEl.innerHTML = issues.filter(i => i.type === 'warn' || i.type === 'info').map(i => i.msg).join('<br>');
+    document.getElementById('calcBtn').disabled = false;
+  } else {
+    statusEl.textContent = '✅ 所有参数正常'; statusEl.style.color = '#27ae60';
+    alertEl.style.display = 'none';
+    document.getElementById('calcBtn').disabled = false;
+  }
+
+  if (issues.length > 0) {
+    liveWarn.innerHTML = issues.map(i => `<div class="live-warn ${i.type}">${i.msg}</div>`).join('');
+  } else {
+    liveWarn.innerHTML = '';
+  }
+  return { hasCritical, hasWarning, issues };
+}
+
+function showToast(msg, type) {
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; }, 3000);
+  setTimeout(() => t.remove(), 3500);
+}
+
+function autoFillDemo() {
+  document.getElementById('avgWeight').value = 200;
+  document.getElementById('count').value = 8000;
+  document.getElementById('waterTemp').value = 15;
+  document.getElementById('doLevel').value = 9.5;
+  document.getElementById('ph').value = 7.3;
+  document.getElementById('ammonia').value = 0.1;
+  validateParams();
+  showToast('✅ 已填充三文鱼标准参数', 'ok');
+}
+
+// ============ pH 修正 ============
+function phCorrection(ph) {
+  if (ph >= 6.5 && ph <= 8.0) return 1.0;
+  if (ph >= 6.0 && ph < 6.5) return 0.85;
+  if (ph >= 5.5 && ph < 6.0) return 0.6;
+  if (ph > 8.0 && ph <= 8.5) return 0.85;
+  if (ph > 8.5 && ph <= 9.0) return 0.5;
+  return 0.3;
+}
+
+// ============ 投喂计算 ============
 function calcFeeding() {
-  const params = {
-    avgWeight: parseFloat(document.getElementById('avgWeight').value),
-    count: parseInt(document.getElementById('count').value),
-    waterTemp: parseFloat(document.getElementById('waterTemp').value),
-    doLevel: parseFloat(document.getElementById('doLevel').value),
-    fishType: document.getElementById('fishType').value,
-  };
+  const v = validateParams();
+  if (v.hasCritical) { showToast('❌ 参数异常，请修正后重试', 'error'); return; }
+  if (v.hasWarning) showToast('⚠️ 部分参数偏离推荐值，已自动修正', 'warn');
+
+  const avgWeight = parseFloat(document.getElementById('avgWeight').value);
+  const count = parseInt(document.getElementById('count').value);
+  const waterTemp = parseFloat(document.getElementById('waterTemp').value);
+  const doLevel = parseFloat(document.getElementById('doLevel').value);
   const ph = parseFloat(document.getElementById('ph').value);
   const ammonia = parseFloat(document.getElementById('ammonia').value);
-  const result = FeedingEngine.calculate(params);
-  const wq = FeedingEngine.assessWaterQuality(params.waterTemp, params.doLevel, ph, ammonia);
+  const fishType = document.getElementById('fishType').value;
 
+  const result = FeedingEngine.calculate({ avgWeight, count, waterTemp, doLevel, fishType });
+
+  // pH 修正
+  const phF = phCorrection(ph);
+  let phNote = '';
+  if (phF < 1.0) {
+    result.dailyFeed = Math.round(result.dailyFeed * phF * 1000) / 1000;
+    result.feedPerMeal = Math.round(result.dailyFeed / result.mealsPerDay * 1000) / 1000;
+    result.feedingRate = Math.round(result.feedingRate * phF * 1000) / 1000;
+    Object.keys(result.methods).forEach(k => {
+      result.methods[k].rate = Math.round(result.methods[k].rate * phF * 1000) / 1000;
+      result.methods[k].daily = Math.round(result.methods[k].daily * phF * 1000) / 1000;
+    });
+    phNote = `⚠️ pH=${ph} 偏离中性, 投喂量×${phF.toFixed(2)}`;
+    result.warnings.unshift(phNote);
+  }
+
+  // 氨氮修正
+  if (ammonia > 0.2) {
+    const nh3F = Math.max(0.5, 1 - (ammonia - 0.2) * 0.8);
+    result.dailyFeed = Math.round(result.dailyFeed * nh3F * 1000) / 1000;
+    result.feedPerMeal = Math.round(result.dailyFeed / result.mealsPerDay * 1000) / 1000;
+    result.warnings.unshift(`⚠️ 氨氮=${ammonia}mg/L 超标, 投喂量×${nh3F.toFixed(2)}`);
+  }
+
+  const wq = FeedingEngine.assessWaterQuality(waterTemp, doLevel, ph, ammonia);
+
+  // === 渲染 ===
   let html = '<div class="card"><h3>🎯 综合推荐结果</h3>';
-  html += `<div class="result-box">`;
-  html += `<span class="val">${result.dailyFeed.toFixed(2)}</span> <span class="unit">kg/天</span>`;
-  html += `&nbsp;|&nbsp; 推荐投饲率: <b>${result.feedingRate.toFixed(3)}%</b>`;
-  html += `&nbsp;|&nbsp; 分 <b>${result.mealsPerDay}</b> 次 (${result.mealTimes.join(', ')})`;
-  html += `<br><small style="color:#888">推荐策略: ${result.recommendedMethod}</small></div>`;
+  html += `<div class="result-box"><span class="val">${result.dailyFeed.toFixed(2)}</span> <span class="unit">kg/天</span> &nbsp;|&nbsp; 投饲率: <b>${result.feedingRate.toFixed(3)}%</b> &nbsp;|&nbsp; 分 <b>${result.mealsPerDay}</b> 次 (${result.mealTimes.join(', ')})<br><small style="color:#888">策略: ${result.recommendedMethod}</small></div>`;
 
-  // 三法对比卡片
+  if (phF < 1.0 || ammonia > 0.2) {
+    html += '<div style="margin-top:12px;padding:10px 14px;background:rgba(230,126,34,.08);border:1px solid rgba(230,126,34,.2);border-radius:8px;font-size:12px"><b>🌍 环境修正已应用:</b><br>';
+    if (phF < 1.0) html += `• pH=${ph} → 投喂量×${phF.toFixed(2)} (${Math.abs(7-ph).toFixed(1)}偏离中性)<br>`;
+    if (ammonia > 0.2) html += `• 氨氮=${ammonia}mg/L → 投喂量×${Math.max(0.5,1-(ammonia-0.2)*0.8).toFixed(2)}<br>`;
+    html += '</div>';
+  }
+
   html += '<div class="grid-3" style="margin-top:16px">';
-  const methods = result.methods;
   ['table','science','growth'].forEach(key => {
-    const m = methods[key];
-    const r = m.rate || 0;
-    const d = m.daily || 0;
-    html += `<div class="card" style="padding:14px;text-align:center">
-      <div style="font-size:13px;font-weight:700;margin-bottom:6px">${m.label}</div>
-      <div style="font-size:26px;font-weight:800;color:var(--accent)">${r.toFixed(3)}%</div>
-      <div style="font-size:11px;color:var(--text-dim)">${d.toFixed(2)} kg/天</div>
-      <div style="font-size:10px;color:var(--text-dim);margin-top:4px">${m.source}</div>
-    </div>`;
+    const m = result.methods[key];
+    html += `<div class="card" style="padding:14px;text-align:center"><div style="font-size:13px;font-weight:700;margin-bottom:6px">${m.label}</div><div style="font-size:26px;font-weight:800;color:var(--accent)">${(m.rate||0).toFixed(3)}%</div><div style="font-size:11px;color:var(--text-dim)">${(m.daily||0).toFixed(2)} kg/天</div><div style="font-size:10px;color:var(--text-dim);margin-top:4px">${m.source}</div></div>`;
   });
   html += '</div>';
 
-  // 详细推导步骤
-  html += '<details open style="margin-top:16px"><summary style="cursor:pointer;font-weight:700;color:var(--accent)">📐 点击展开完整推导过程</summary><div style="margin-top:8px">';
+  html += '<details style="margin-top:16px"><summary style="cursor:pointer;font-weight:700;color:var(--accent)">📐 展开完整推导过程</summary><div style="margin-top:8px">';
   ['table','science','growth'].forEach(key => {
-    const m = methods[key];
+    const m = result.methods[key];
     html += `<div class="card" style="padding:12px;margin-bottom:8px"><b>${m.label}</b> — ${m.source}`;
     m.steps.forEach(s => {
-      html += `<div class="step-list"><div>
-        <b>步骤${s.step}: ${s.title}</b><br>
-        📐 公式: <code>${s.formula || ''}</code><br>
-        📥 输入: ${s.input}<br>
-        📤 结果: ${s.result}<br>
-        <span class="src">📖 ${s.source}</span>
-        ${s.detail ? `<br><small>💡 ${s.detail}</small>` : ''}
-      </div></div>`;
+      html += `<div class="step-list"><div><b>步骤${s.step}: ${s.title}</b><br>📐 <code>${s.formula||''}</code><br>📥 ${s.input}<br>📤 ${s.result}<br><span class="src">📖 ${s.source}</span>${s.detail?`<br><small>💡 ${s.detail}</small>`:''}</div></div>`;
     });
-    if (m.extras) {
-      m.extras.forEach(s => {
-        html += `<div class="step-list"><div>
-          <b>步骤${s.step}: ${s.title}</b><br>
-          📐 公式: <code>${s.formula || ''}</code><br>
-          📤 ${s.result}<br>
-          <span class="src">📖 ${s.source}</span>
-        </div></div>`;
-      });
-    }
     html += '</div>';
   });
   html += '</div></details>';
 
-  // 预警
   result.warnings.forEach(w => {
-    const cls = w.startsWith('🚨') ? 'warning critical' : 'warning';
-    html += `<div class="${cls}">${w}</div>`;
+    html += `<div class="warning ${w.startsWith('🚨')?'critical':''}">${w}</div>`;
   });
-  if (wq.issues.length > 0) {
-    html += `<div class="warning ${wq.status==='critical'?'critical':''}">🌊 水质评估: ${wq.issues.join(', ')}</div>`;
-  }
+  if (wq.issues.length > 0) html += `<div class="warning ${wq.status==='critical'?'critical':''}">🌊 水质评估: ${wq.issues.join(', ')}</div>`;
+  if (ammonia > 0.6) html += '<div class="warning critical">🚨 氨氮严重超标(>0.6mg/L), 建议立即换水并暂停投喂!</div>';
+  if (ph < 5.5 || ph > 9) html += '<div class="warning critical">🚨 pH严重异常! 建议立即调节水质</div>';
 
   html += '</div>';
   document.getElementById('feedingResult').innerHTML = html;
+  if (!v.hasWarning) showToast('✅ 计算完成，参数正常', 'ok');
 }
 
 // ============ 投喂记录 ============
 function addRecord() {
-  const rec = {
+  const r = {
     date: document.getElementById('recDate').value || new Date().toISOString().split('T')[0],
     feed: parseFloat(document.getElementById('recFeed').value) || 0,
     rate: parseInt(document.getElementById('recRate').value) || 0,
@@ -110,120 +209,73 @@ function addRecord() {
     doLevel: parseFloat(document.getElementById('recDO').value) || 0,
     note: document.getElementById('recNote').value || '',
   };
-  records.unshift(rec);
-  saveRecords();
-  renderRecords();
-  // 清空
-  document.getElementById('recFeed').value = '';
-  document.getElementById('recNote').value = '';
+  records.unshift(r); saveRecords(); renderRecords();
+  document.getElementById('recFeed').value = ''; document.getElementById('recNote').value = '';
+  showToast('✅ 记录已保存', 'ok');
 }
 
 function renderRecords() {
-  const tbody = document.getElementById('recordTable');
-  tbody.innerHTML = records.map((r, i) => `<tr>
-    <td>${r.date}</td><td>${r.feed}</td><td>${r.rate}%</td><td>${r.weight}</td>
-    <td>${r.temp}</td><td>${r.doLevel}</td><td>${r.note}</td>
-    <td><button class="btn btn-danger btn-sm" onclick="delRecord(${i})">删除</button></td>
-  </tr>`).join('');
+  document.getElementById('recordTable').innerHTML = records.map((r, i) =>
+    `<tr><td>${r.date}</td><td>${r.feed}</td><td>${r.rate}%</td><td>${r.weight}</td><td>${r.temp}</td><td>${r.doLevel}</td><td>${r.note}</td><td><button class="btn btn-danger btn-sm" onclick="delRecord(${i})">删除</button></td></tr>`
+  ).join('');
 }
 
 function delRecord(i) { records.splice(i, 1); saveRecords(); renderRecords(); }
-
-function saveRecords() {
-  try { localStorage.setItem('salmon_records', JSON.stringify(records)); } catch(e) {}
-}
+function saveRecords() { try { localStorage.setItem('salmon_records', JSON.stringify(records)); } catch(e) {} }
 function loadRecords() {
   try { records = JSON.parse(localStorage.getItem('salmon_records') || '[]'); } catch(e) { records = []; }
   if (records.length === 0) {
-    // 预置示例数据
     const today = new Date();
     for (let i = 14; i >= 0; i--) {
       const d = new Date(today); d.setDate(d.getDate() - i);
-      records.push({
-        date: d.toISOString().split('T')[0],
-        feed: 40 + Math.random() * 20,
-        rate: 80 + Math.floor(Math.random() * 20),
-        weight: 120 + Math.floor(i * 2.2 + Math.random() * 5),
-        temp: 13 + Math.random() * 4,
-        doLevel: 7.5 + Math.random() * 3,
-        note: i === 0 ? '今日记录' : '',
-      });
+      records.push({ date: d.toISOString().split('T')[0], feed: Math.round((40+Math.random()*20)*10)/10, rate: 80+Math.floor(Math.random()*20), weight: Math.round(120+i*2.2+Math.random()*5), temp: Math.round((13+Math.random()*4)*10)/10, doLevel: Math.round((7.5+Math.random()*3)*10)/10, note: i===0?'今日记录':'' });
     }
     saveRecords();
   }
 }
 
-// ============ 数据分析面板 ============
+// ============ 仪表盘 ============
 function renderDashboard() {
   if (records.length === 0) loadRecords();
-
-  // 统计数据
-  const totalFeed = records.reduce((s, r) => s + r.feed, 0);
-  const avgRate = records.length > 0 ? Math.round(records.reduce((s, r) => s + r.rate, 0) / records.length) : 0;
-  const firstW = records.length > 0 ? records[records.length - 1].weight : 0;
-  const lastW = records.length > 0 ? records[0].weight : 0;
-  const weightGain = lastW - firstW;
-  const fcr = FeedingEngine.calcFCR(totalFeed, weightGain / 1000);
-  const avgDO = records.length > 0 ? (records.reduce((s,r)=>s+r.doLevel,0)/records.length).toFixed(1) : 0;
+  const tf = records.reduce((s,r)=>s+r.feed,0);
+  const ar = records.length>0?Math.round(records.reduce((s,r)=>s+r.rate,0)/records.length):0;
+  const fw = records.length>0?records[records.length-1].weight:0;
+  const lw = records.length>0?records[0].weight:0;
+  const wg = lw-fw;
+  const fcr = FeedingEngine.calcFCR(tf,wg/1000);
+  const ado = records.length>0?(records.reduce((s,r)=>s+r.doLevel,0)/records.length).toFixed(1):0;
 
   document.getElementById('statCards').innerHTML = `
-    <div class="stat-card"><div class="num">${totalFeed.toFixed(1)}</div><div class="label">总投喂量 (kg)</div></div>
-    <div class="stat-card"><div class="num">${avgRate}%</div><div class="label">平均摄食率</div></div>
-    <div class="stat-card"><div class="num">${fcr}</div><div class="label">FCR (饲料转化率)</div></div>
-    <div class="stat-card"><div class="num">${weightGain}g</div><div class="label">总增重</div></div>
-    <div class="stat-card"><div class="num">${avgDO}</div><div class="label">平均溶氧 (mg/L)</div></div>
-    <div class="stat-card"><div class="num">${records.length}</div><div class="label">记录天数</div></div>
-  `;
+    <div class="stat-card"><div class="num">${tf.toFixed(1)}</div><div class="label">总投喂量 (kg)</div></div>
+    <div class="stat-card"><div class="num">${ar}%</div><div class="label">平均摄食率</div></div>
+    <div class="stat-card"><div class="num">${fcr}</div><div class="label">FCR</div></div>
+    <div class="stat-card"><div class="num">${wg}g</div><div class="label">总增重</div></div>
+    <div class="stat-card"><div class="num">${ado}</div><div class="label">平均溶氧</div></div>
+    <div class="stat-card"><div class="num">${records.length}</div><div class="label">记录天数</div></div>`;
 
-  // 预警
-  const warnings = [];
-  if (fcr > 2.0) warnings.push('⚠️ FCR 偏高 (>2.0)，建议检查饲料质量或鱼体健康');
-  if (parseFloat(avgDO) < 7) warnings.push('⚡ 近期平均溶氧偏低，建议加强增氧');
-  if (avgRate < 70) warnings.push('📉 近期摄食率偏低，检查水质和鱼体状况');
-  document.getElementById('warnings').innerHTML = warnings.length > 0
-    ? warnings.map(w => `<div class="warning">${w}</div>`).join('')
-    : '<div style="color:#27ae60">✅ 所有指标正常，无需预警</div>';
+  const warns = [];
+  if (fcr>2.0) warns.push('⚠️ FCR偏高(>2.0), 检查饲料或鱼体健康');
+  if (parseFloat(ado)<7) warns.push('⚡ 平均溶氧偏低, 建议加强增氧');
+  if (ar<70) warns.push('📉 摄食率偏低, 检查水质和鱼体');
+  document.getElementById('warnings').innerHTML = warns.length>0 ? warns.map(w=>`<div class="warning">${w}</div>`).join('') : '<div style="color:#27ae60">✅ 所有指标正常</div>';
 
-  // 图表
   setTimeout(() => {
-    const dates = records.map(r => r.date).reverse();
-    const feeds = records.map(r => r.feed).reverse();
-    const weights = records.map(r => r.weight).reverse();
-
+    const dates = records.map(r=>r.date).reverse();
     if (!charts.feed) charts.feed = echarts.init(document.getElementById('chartFeed'));
-    charts.feed.setOption({
-      tooltip: { trigger: 'axis' },
-      xAxis: { type: 'category', data: dates },
-      yAxis: { type: 'value', name: 'kg' },
-      series: [{ name: '投喂量', type: 'bar', data: feeds, itemStyle: { color: '#2980b9' } }],
-    });
-
+    charts.feed.setOption({ tooltip:{trigger:'axis'}, xAxis:{type:'category',data:dates}, yAxis:{type:'value',name:'kg'}, series:[{name:'投喂量',type:'bar',data:records.map(r=>r.feed).reverse(),itemStyle:{color:'#2980b9'}}] });
     if (!charts.growth) charts.growth = echarts.init(document.getElementById('chartGrowth'));
-    charts.growth.setOption({
-      tooltip: { trigger: 'axis' },
-      xAxis: { type: 'category', data: dates },
-      yAxis: { type: 'value', name: 'g' },
-      series: [{ name: '体重', type: 'line', data: weights, smooth: true, itemStyle: { color: '#27ae60' } }],
-    });
+    charts.growth.setOption({ tooltip:{trigger:'axis'}, xAxis:{type:'category',data:dates}, yAxis:{type:'value',name:'g'}, series:[{name:'体重',type:'line',data:records.map(r=>r.weight).reverse(),smooth:true,itemStyle:{color:'#27ae60'}}] });
   }, 200);
 }
 
 // ============ 知识库 ============
 function renderKnowledgeTab() {
-  const kb = KnowledgeBase.getKnowledgeSources();
-  document.getElementById('kbTable').innerHTML = kb.map(k =>
-    `<tr><td>${k.id}</td><td>${k.title}</td><td>${k.source}</td><td><span class="kb-tag">${k.type}</span></td></tr>`
-  ).join('');
-
-  // 渲染投饲率速查表
+  document.getElementById('kbTable').innerHTML = KnowledgeBase.getKnowledgeSources().map(k => `<tr><td>${k.id}</td><td>${k.title}</td><td>${k.source}</td><td><span class="kb-tag">${k.type}</span></td></tr>`).join('');
   const tbl = KnowledgeBase.feedingTable;
-  let tableHtml = '<table><thead><tr><th>水温</th>' +
-    tbl.weightLevels.map(w => `<th>${w}g</th>`).join('') + '</tr></thead><tbody>';
-  tbl.rates.forEach((row, i) => {
-    tableHtml += `<tr><td><b>${tbl.temps[i]}℃</b></td>` + row.map(r => `<td>${r}%</td>`).join('') + '</tr>';
-  });
-  tableHtml += '</tbody></table>';
-  document.getElementById('feedingTableDiv').innerHTML = tableHtml;
+  let th = '<table><thead><tr><th>水温</th>' + tbl.weightLevels.map(w => `<th>${w}g</th>`).join('') + '</tr></thead><tbody>';
+  tbl.rates.forEach((row, i) => { th += '<tr><td><b>' + tbl.temps[i] + '℃</b></td>' + row.map(r => `<td>${r}%</td>`).join('') + '</tr>'; });
+  th += '</tbody></table>';
+  document.getElementById('feedingTableDiv').innerHTML = th;
 }
 
 // ============ AI 问答 ============
@@ -231,119 +283,49 @@ function askAI() {
   const input = document.getElementById('chatInput');
   const q = input.value.trim();
   if (!q) return;
-
   const box = document.getElementById('chatBox');
   box.innerHTML += `<div class="chat-msg user">${q}</div>`;
-  input.value = '';
-  box.scrollTop = box.scrollHeight;
-
-  // 本地知识库匹配
-  const answer = localQA(q);
-  setTimeout(() => {
-    box.innerHTML += `<div class="chat-msg ai">${answer}</div>`;
-    box.scrollTop = box.scrollHeight;
-  }, 500);
+  input.value = ''; box.scrollTop = box.scrollHeight;
+  setTimeout(() => { box.innerHTML += `<div class="chat-msg ai">${localQA(q)}</div>`; box.scrollTop = box.scrollHeight; }, 500);
 }
 
 function localQA(question) {
   const q = question.toLowerCase();
-  // 匹配水温+体重组合
-  const tempMatch = q.match(/水温\s*(\d+)/) || q.match(/(\d+)\s*度/);
-  const weightMatch = q.match(/体重\s*(\d+)\s*g/i) || q.match(/(\d+)\s*g[^/]/);
-  const doMatch = q.match(/溶氧\s*([\d.]+)/);
-
-  if (tempMatch && weightMatch) {
-    const temp = parseFloat(tempMatch[1]);
-    const weight = parseFloat(weightMatch[1]);
-    const result = FeedingEngine.calculate({ avgWeight: weight, count: 1000, waterTemp: temp, doLevel: 9, fishType: '三文鱼' });
-    let ans = `📐 水温 <b>${temp}℃</b>、体重 <b>${weight}g</b> 时：<br><br>`;
-    ans += `• 基准投饲率: <b>${result.feedingRate}%</b><br>`;
-    ans += `• 每1000尾日投喂量: <b>${(result.dailyFeed).toFixed(2)} kg</b><br>`;
-    ans += `• 建议分 <b>${result.mealsPerDay}</b> 次投喂<br>`;
-    ans += `• 每餐: <b>${result.feedPerMeal.toFixed(2)} kg</b><br><br>`;
-    ans += `📖 <small>来源: 《水产动物营养与饲料学》虹鳟投饲率表</small>`;
-    return ans;
+  const tm = q.match(/水温\s*(\d+)/) || q.match(/(\d+)\s*度/);
+  const wm = q.match(/体重\s*(\d+)\s*g/i) || q.match(/(\d+)\s*g[^/]/);
+  if (tm && wm) {
+    const t = parseFloat(tm[1]), w = parseFloat(wm[1]);
+    const r = FeedingEngine.calculate({ avgWeight: w, count: 1000, waterTemp: t, doLevel: 9, fishType: '三文鱼' });
+    return `📐 水温<b>${t}℃</b>、体重<b>${w}g</b>:<br><br>• 推荐投饲率: <b>${r.feedingRate.toFixed(3)}%</b><br>• 每千尾日投喂: <b>${r.dailyFeed.toFixed(2)} kg</b><br>• 分<b>${r.mealsPerDay}</b>次 (${r.mealTimes.join(', ')})<br>• 三法对比: 查表${r.methods.table.rate.toFixed(2)}% | 科研${r.methods.science.rate.toFixed(2)}% | 生长${r.methods.growth.rate.toFixed(2)}%<br><br>📖 <small>来源: 投饲率表+科研模型+SGR</small>`;
   }
-
-  if (q.includes('fcr') || q.includes('饲料转化')) {
-    return '📊 <b>FCR (饲料转化率)</b> = 投喂饲料总量 ÷ 鱼体增重<br><br>理想值 1.0~1.5，FCR > 2.0 提示饲料浪费或鱼体健康问题。<br><br>📖 <small>来源: FAO 水产养殖手册</small>';
-  }
-
-  if (q.includes('溶氧') || q.includes('do')) {
-    return '🌊 三文鱼溶氧要求 <b>≥ 9 mg/L</b><br><br>溶氧越低摄食越少：<br>• 9 mg/L → 正常 (系数1.0)<br>• 5 mg/L → 摄食率87%<br>• 3 mg/L → 摄食率64%<br>• 1 mg/L → 停食<br><br>📖 <small>来源: 鲤科鱼类实验数据</small>';
-  }
-
-  if (q.includes('水温') && !weightMatch) {
-    return '🌡️ 三文鱼适宜水温 <b>2~22℃</b>，最佳 <b>12~18℃</b><br><br>• < 10℃: 日投喂2次<br>• 10~22℃: 日投喂3次<br>• > 20℃: 每升1℃投喂量减3.5%<br>• > 22℃ 或 < 2℃: 暂停投喂<br><br>📖 <small>来源: CN103766250A 专利 + 虹鳟投饲率表</small>';
-  }
-
-  if (q.includes('密度') || q.includes('养殖密度')) {
-    return '🐟 <b>虹鳟养殖密度标准 (DB63/T 1042—2011):</b><br><br>• 稚鱼(1-2g): <b>400尾/m³</b><br>• 鱼种(51-100g): <b>40尾/m³</b><br>• 商品鱼(100-150g): <b>28尾/m³</b><br>• 商品鱼(250-500g): <b>14尾/m³</b><br>• 大规格(>500g): <b><3尾/m³</b><br><br>RAS系统: 30-80 kg/m³, 网箱: 10-40 kg/m³<br>📖 <small>来源: DB63/T 1042—2011, DB63/T 2430—2025</small>';
-  }
-
-  if (q.includes('疾病') || q.includes('生病') || q.includes('发病')) {
-    let ans = '🩺 <b>三文鱼常见疾病 (NY/T 755—2003):</b><br><br>';
-    KnowledgeBase.diseases.forEach(d => {
-      ans += `• <b>${d.name}</b>: ${d.symptom}<br>  💊 ${d.treatment}<br><br>`;
-    });
-    ans += '原则: 预防为主、防重于治。苗种入箱前用1-3%氯化钠浸洗。<br>📖 <small>来源: NY/T 755—2003</small>';
-    return ans;
-  }
-
-  if (q.includes('模型') || q.includes('公式') || q.includes('生长')) {
-    const m = KnowledgeBase.atlanticSalmon;
-    return `📐 <b>大西洋鲑生长与排放模型 (孙国祥 2014):</b><br><br>
-      <b>生长模型:</b> ${m.growthModel}<br>
-      <b>氮排放:</b> ${m.nitrogenModel}<br>
-      <b>磷排放:</b> ${m.phosphorusModel}<br><br>
-      模型偏离度: 生长12.68%, 氮17.93%, 磷23.65%<br><br>
-      最优参数: 投喂率<b>${m.optimal.rate}%</b>, <b>${m.optimal.frequency}次/天</b>, <b>${m.optimal.density}kg/m³</b><br>
-      📖 <small>来源: 中科院海洋研究所博士论文</small>`;
-  }
-
-  if (q.includes('mode') && (q.includes('fcr') || q.includes('模式'))) {
-    let ans = '📊 <b>FCR标准 (按养殖模式):</b><br><br>';
-    KnowledgeBase.fcrStandards.forEach(s => {
-      ans += `• ${s.mode}: 密度${s.density} → FCR <b>${s.fcr}</b><br>`;
-    });
-    ans += '<br>理想FCR: 1.0-1.2。密度越高FCR越差。<br>📖 <small>来源: FAO + 行业数据</small>';
-    return ans;
-  }
-
-  if (q.includes('你好') || q.includes('帮助') || q.includes('功能')) {
-    return '👋 我是三文鱼养殖AI助手！知识库已收录 <b>12条知识源</b> (教材+论文+标准+专利)，能回答：<br><br>• 投喂量计算 (水温+体重+溶氧)<br>• FCR饲料转化率 + 养殖模式<br>• 水质标准 + 养殖密度<br>• 疾病防控 (5种常见病)<br>• 生长模型 (孙国祥2014)<br>• DOmaxFI温度模型 (Remen2016)<br><br>试试输入 "水温18度体重200g" 或 "密度标准" 或 "疾病防治"';
-  }
-
-  return '🤔 请提供具体参数或关键词：<br><br>📐 投喂计算: "水温15度体重150g"<br>📊 FCR: "不同模式FCR"<br>🐟 密度: "密度标准"<br>🩺 疾病: "疾病防治"<br>📈 模型: "生长模型公式"';
+  if (q.includes('fcr')) return '📊 <b>FCR</b> = 投喂总量÷增重。理想1.0-1.2, >2.0需检查。<br>RAS:1.15 | 网箱:1.00 | 流水:1.05<br>📖 <small>FAO标准</small>';
+  if (q.includes('溶氧')||q.includes('do')) return '🌊 三文鱼溶氧≥9mg/L, 虹鳟≥6-7mg/L。<br>DOmaxFI(15℃)=66%≈9.2mg/L, 低于此值摄食率sigmoid递减。<br>📖 <small>Remen2016</small>';
+  if (q.includes('水温')&&!wm) return '🌡️ 三文鱼2-22℃(最佳12-18)。<10℃日喂2次,≥10℃日喂3次。>20℃每升1℃减3.5%。<br>📖 <small>CN103766250A</small>';
+  if (q.includes('密度')) { let a='🐟 <b>虹鳟密度标准:</b><br>'; KnowledgeBase.fcrStandards.forEach(s=>a+=`• ${s.mode}:${s.density}→FCR${s.fcr}<br>`); return a+'📖 <small>DB63/T1042-2011</small>'; }
+  if (q.includes('疾病')) { let a='🩺 <b>常见病:</b><br>'; KnowledgeBase.diseases.forEach(d=>a+=`• <b>${d.name}</b>: ${d.treatment}<br>`); return a+'📖 <small>NY/T755-2003</small>'; }
+  if (q.includes('模型')||q.includes('公式')) return `📐 <b>三模型:</b><br>①查表: 二维双线性插值<br>②科研: FI=α×BW^β×e^(γT)×h(DO)<br>③SGR: F=1.2%×(SGR/1.5)×(W/100)^(-0.15)<br>📖 <small>教材+Azevedo2026+FAO</small>`;
+  if (q.includes('ph')||q.includes('酸碱')) return '🧪 pH 6-8适宜, 6.5-8.0最优。pH<5.5或>9.0严重危害。偏离中性时投喂量自动修正: pH5.5-6→×0.6, pH8-8.5→×0.85。<br>📖 <small>水产养殖通用标准</small>';
+  if (q.includes('你好')||q.includes('帮助')) return '👋 我能回答: 投喂计算/FCR/溶氧/水温/密度/疾病/pH/模型公式。试试 "水温15度体重200g"!';
+  return '🤔 试试: "水温15度体重200g" | "FCR标准" | "密度" | "疾病" | "pH范围" | "模型公式"';
 }
 
-// ============ 主题切换 ============
+// ============ 主题 ============
 let darkMode = true;
 function toggleDark() {
   darkMode = !darkMode;
-  const root = document.documentElement;
-  if (darkMode) {
-    root.style.setProperty('--ocean-deep', '#0a1628');
-    root.style.setProperty('--card-bg', '#12243a');
-    root.style.setProperty('--text', '#d0dce8');
-  } else {
-    root.style.setProperty('--ocean-deep', '#e8f0f4');
-    root.style.setProperty('--card-bg', '#ffffff');
-    root.style.setProperty('--text', '#333333');
-  }
+  const r = document.documentElement;
+  if (darkMode) { r.style.setProperty('--ocean-deep','#0a1628'); r.style.setProperty('--card-bg','#12243a'); r.style.setProperty('--text','#d0dce8'); }
+  else { r.style.setProperty('--ocean-deep','#e8f0f4'); r.style.setProperty('--card-bg','#ffffff'); r.style.setProperty('--text','#333333'); }
 }
 
 // ============ 初始化 ============
 function init() {
   loadRecords();
   document.getElementById('recDate').value = new Date().toISOString().split('T')[0];
-  setInterval(() => {
-    document.getElementById('clock').textContent = new Date().toLocaleString('zh-CN');
-  }, 1000);
+  validateParams();
+  setInterval(() => { document.getElementById('clock').textContent = new Date().toLocaleString('zh-CN'); }, 1000);
   document.getElementById('clock').textContent = new Date().toLocaleString('zh-CN');
 }
 
 window.addEventListener('load', init);
-window.addEventListener('resize', () => {
-  Object.values(charts).forEach(c => c.resize());
-});
+window.addEventListener('resize', () => { Object.values(charts).forEach(c => c.resize()); });

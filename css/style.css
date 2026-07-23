@@ -534,6 +534,24 @@ footer a {
 ::-webkit-scrollbar-thumb:hover { background: var(--ocean-light); }
 
 /* ---- 切换按钮 ---- */
+/* ---- 验证状态 ---- */
+.form-group .range { font-size:9px; color:var(--text-dim); font-weight:400 }
+input.invalid { border-color:#e74c3c !important; box-shadow:0 0 0 3px rgba(231,76,60,.15) !important; animation:shake .3s }
+input.warning-input { border-color:#e67e22 !important; box-shadow:0 0 0 3px rgba(230,126,34,.15) !important }
+input.valid { border-color:#27ae60 !important }
+@keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-3px)} 75%{transform:translateX(3px)} }
+.live-warn { padding:6px 12px; border-radius:6px; font-size:12px; margin:3px 0; display:flex;align-items:center;gap:6px }
+.live-warn.crit { background:rgba(231,76,60,.12); color:#f08080; border:1px solid rgba(231,76,60,.25) }
+.live-warn.warn { background:rgba(230,126,34,.1); color:#f0c080; border:1px solid rgba(230,126,34,.2) }
+.live-warn.info { background:rgba(74,158,255,.1); color:#80b8f0; border:1px solid rgba(74,158,255,.2) }
+.toast { position:fixed;top:20px;right:20px;z-index:9999;padding:14px 20px;border-radius:10px;color:#fff;font-size:13px;font-weight:600;animation:slideIn .3s ease;max-width:380px;box-shadow:0 8px 30px rgba(0,0,0,.4) }
+.toast.error { background:linear-gradient(135deg,#c0392b,#e74c3c) }
+.toast.warn { background:linear-gradient(135deg,#d35400,#e67e22) }
+.toast.ok { background:linear-gradient(135deg,#27ae60,#2ecc71) }
+@keyframes slideIn { from{transform:translateX(100%);opacity:0} to{transform:translateX(0);opacity:1} }
+#calcBtn:disabled { opacity:.4; cursor:not-allowed }
+#paramStatus { transition:color .3s }
+
 .dark-toggle {
   cursor: pointer;
   padding: 6px 12px;
