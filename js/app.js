@@ -20,7 +20,7 @@ function switchTab(name) {
   if (name === 'records') renderRecords();
 }
 
-// ============ 投喂计算 ============
+// ============ 投喂计算 (三法对比) ============
 function calcFeeding() {
   const params = {
     avgWeight: parseFloat(document.getElementById('avgWeight').value),
@@ -31,22 +31,58 @@ function calcFeeding() {
   };
   const ph = parseFloat(document.getElementById('ph').value);
   const ammonia = parseFloat(document.getElementById('ammonia').value);
-
   const result = FeedingEngine.calculate(params);
   const wq = FeedingEngine.assessWaterQuality(params.waterTemp, params.doLevel, ph, ammonia);
 
-  let html = '<div class="card"><h3>✅ 投喂计划结果</h3>';
-  html += `<div class="result-box"><span class="val">${result.dailyFeed}</span> <span class="unit">kg/天</span>`;
-  html += `&nbsp;&nbsp;|&nbsp;&nbsp; 投饲率: <b>${result.feedingRate}%</b>`;
-  html += `&nbsp;&nbsp;|&nbsp;&nbsp; 分 <b>${result.mealsPerDay}</b> 次投喂 (${result.mealTimes.join(', ')})`;
-  html += `<br><small>每餐: ${result.feedPerMeal} kg</small></div>`;
+  let html = '<div class="card"><h3>🎯 综合推荐结果</h3>';
+  html += `<div class="result-box">`;
+  html += `<span class="val">${result.dailyFeed.toFixed(2)}</span> <span class="unit">kg/天</span>`;
+  html += `&nbsp;|&nbsp; 推荐投饲率: <b>${result.feedingRate.toFixed(3)}%</b>`;
+  html += `&nbsp;|&nbsp; 分 <b>${result.mealsPerDay}</b> 次 (${result.mealTimes.join(', ')})`;
+  html += `<br><small style="color:#888">推荐策略: ${result.recommendedMethod}</small></div>`;
 
-  // 计算步骤
-  html += '<div class="step-list" style="margin-top:12px"><b>📝 计算过程:</b>';
-  result.steps.forEach(s => {
-    html += `<div><b>步骤${s.step}: ${s.title}</b> → ${s.result}<br><span class="src">📖 来源: ${s.source}</span></div>`;
+  // 三法对比卡片
+  html += '<div class="grid-3" style="margin-top:16px">';
+  const methods = result.methods;
+  ['table','science','growth'].forEach(key => {
+    const m = methods[key];
+    html += `<div class="card" style="padding:14px;text-align:center">
+      <div style="font-size:13px;font-weight:700;margin-bottom:6px">${m.label}</div>
+      <div style="font-size:26px;font-weight:800;color:var(--accent)">${m.rate.toFixed(3)}%</div>
+      <div style="font-size:11px;color:var(--text-dim)">${m.daily.toFixed(2)} kg/天</div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:4px">${m.source}</div>
+    </div>`;
   });
   html += '</div>';
+
+  // 详细推导步骤
+  html += '<details open style="margin-top:16px"><summary style="cursor:pointer;font-weight:700;color:var(--accent)">📐 点击展开完整推导过程</summary><div style="margin-top:8px">';
+  ['table','science','growth'].forEach(key => {
+    const m = methods[key];
+    html += `<div class="card" style="padding:12px;margin-bottom:8px"><b>${m.label}</b> — ${m.source}`;
+    m.steps.forEach(s => {
+      html += `<div class="step-list"><div>
+        <b>步骤${s.step}: ${s.title}</b><br>
+        📐 公式: <code>${s.formula || ''}</code><br>
+        📥 输入: ${s.input}<br>
+        📤 结果: ${s.result}<br>
+        <span class="src">📖 ${s.source}</span>
+        ${s.detail ? `<br><small>💡 ${s.detail}</small>` : ''}
+      </div></div>`;
+    });
+    if (m.extras) {
+      m.extras.forEach(s => {
+        html += `<div class="step-list"><div>
+          <b>步骤${s.step}: ${s.title}</b><br>
+          📐 公式: <code>${s.formula || ''}</code><br>
+          📤 ${s.result}<br>
+          <span class="src">📖 ${s.source}</span>
+        </div></div>`;
+      });
+    }
+    html += '</div>';
+  });
+  html += '</div></details>';
 
   // 预警
   result.warnings.forEach(w => {
