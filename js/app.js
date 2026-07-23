@@ -246,6 +246,22 @@ function localQA(question) {
   return '🤔 请提供具体参数（水温、体重等），或问 FCR/溶氧/水质标准等问题。例如：<br><br>"水温15度体重150g的三文鱼每天喂多少？"';
 }
 
+// ============ 主题切换 ============
+let darkMode = true;
+function toggleDark() {
+  darkMode = !darkMode;
+  const root = document.documentElement;
+  if (darkMode) {
+    root.style.setProperty('--ocean-deep', '#0a1628');
+    root.style.setProperty('--card-bg', '#12243a');
+    root.style.setProperty('--text', '#d0dce8');
+  } else {
+    root.style.setProperty('--ocean-deep', '#e8f0f4');
+    root.style.setProperty('--card-bg', '#ffffff');
+    root.style.setProperty('--text', '#333333');
+  }
+}
+
 // ============ 初始化 ============
 function init() {
   loadRecords();

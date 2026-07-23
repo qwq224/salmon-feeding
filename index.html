@@ -3,77 +3,32 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>三文鱼养殖投喂管理系统 — SalmonFeeding AI</title>
+<title>🐟 SalmonFeeding AI — 三文鱼养殖投喂管理系统</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#f0f4f8;color:#333;min-height:100vh}
-header{background:linear-gradient(135deg,#1a5276,#2980b9);color:#fff;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 10px rgba(0,0,0,.15)}
-header h1{font-size:22px;letter-spacing:1px}
-header .sub{font-size:12px;opacity:.7;margin-top:2px}
-nav{display:flex;gap:2px;background:#fff;padding:0 24px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
-nav button{padding:12px 20px;border:none;background:none;font-size:14px;cursor:pointer;border-bottom:3px solid transparent;transition:all .2s;color:#666}
-nav button:hover{color:#2980b9}
-nav button.active{color:#1a5276;border-bottom-color:#2980b9;font-weight:600}
-main{padding:24px;max-width:1200px;margin:0 auto}
-.card{background:#fff;border-radius:10px;padding:20px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
-.card h3{font-size:16px;margin-bottom:12px;color:#1a5276;border-bottom:2px solid #e8f0f8;padding-bottom:8px}
-.form-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
-.form-group{display:flex;flex-direction:column;gap:4px}
-.form-group label{font-size:12px;color:#888;font-weight:600}
-.form-group input,.form-group select{padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;width:130px}
-.form-group input:focus{border-color:#2980b9;outline:none}
-.btn{padding:10px 20px;border:none;border-radius:6px;font-size:14px;cursor:pointer;transition:all .2s;font-weight:600}
-.btn-primary{background:#2980b9;color:#fff}
-.btn-primary:hover{background:#1a6da0}
-.btn-danger{background:#e74c3c;color:#fff}
-.btn-sm{padding:6px 12px;font-size:12px}
-.result-box{background:#f8fbfe;border-left:4px solid #2980b9;padding:16px;border-radius:0 8px 8px 0;margin-top:12px}
-.result-box .val{font-size:28px;font-weight:700;color:#1a5276}
-.result-box .unit{font-size:14px;color:#888}
-.step-list{font-size:13px;color:#555;margin-top:10px}
-.step-list div{padding:4px 0;border-bottom:1px solid #eee}
-.step-list .src{color:#888;font-size:11px}
-.warning{background:#fef3e2;border-left:4px solid #e67e22;padding:12px;margin-top:8px;font-size:13px;border-radius:0 6px 6px 0}
-.warning.critical{background:#fde8e8;border-color:#c0392b}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th{background:#f0f4f8;padding:8px;text-align:left;font-weight:600;color:#555}
-td{padding:8px;border-bottom:1px solid #eee}
-.chart-box{height:350px}
-.tab-panel{display:none}
-.tab-panel.active{display:block}
-.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-.stat-card{background:#fff;padding:16px;border-radius:8px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.06)}
-.stat-card .num{font-size:30px;font-weight:700;color:#1a5276}
-.stat-card .label{font-size:11px;color:#888;margin-top:4px}
-.chat-box{height:400px;overflow-y:auto;border:1px solid #eee;border-radius:8px;padding:12px;margin-bottom:12px;background:#fafafa}
-.chat-msg{margin-bottom:10px;padding:8px 12px;border-radius:8px;max-width:80%;font-size:13px;line-height:1.5}
-.chat-msg.user{background:#2980b9;color:#fff;margin-left:auto;text-align:right}
-.chat-msg.ai{background:#e8f0f8;color:#333}
-.chat-input{display:flex;gap:8px}
-.chat-input input{flex:1;padding:10px;border:1px solid #ddd;border-radius:6px;font-size:14px}
-.kb-tag{display:inline-block;padding:2px 8px;background:#e8f0f8;color:#2980b9;border-radius:4px;font-size:11px;margin:2px}
-</style>
+<link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
 <header>
-  <div>
-    <h1>🐟 三文鱼养殖投喂管理系统</h1>
-    <div class="sub">AI-Powered Salmon Feeding Management</div>
+  <div class="logo">
+    <div class="logo-icon">🐟</div>
+    <div>
+      <h1>SalmonFeeding AI</h1>
+      <div class="subtitle">智能投喂 · 数据驱动 · 科学养殖</div>
+    </div>
   </div>
-  <div style="text-align:right;font-size:13px;opacity:.8">
-    <div id="clock">--</div>
+  <div style="display:flex;align-items:center;gap:16px">
+    <span id="clock" style="font-size:12px;color:var(--text-dim)">--</span>
+    <span class="dark-toggle" onclick="toggleDark()" title="切换主题">🌓</span>
   </div>
 </header>
 
 <nav>
-  <button class="active" onclick="switchTab('calculator')">📐 投喂计划</button>
-  <button onclick="switchTab('records')">📋 投喂记录</button>
-  <button onclick="switchTab('dashboard')">📊 数据分析</button>
-  <button onclick="switchTab('knowledge')">📚 知识库</button>
-  <button onclick="switchTab('chatbot')">🤖 AI问答</button>
+  <button class="active" onclick="switchTab('calculator')"><span class="icon">📐</span> 投喂计划</button>
+  <button onclick="switchTab('records')"><span class="icon">📋</span> 投喂记录</button>
+  <button onclick="switchTab('dashboard')"><span class="icon">📊</span> 数据分析</button>
+  <button onclick="switchTab('knowledge')"><span class="icon">📚</span> 知识库</button>
+  <button onclick="switchTab('chatbot')"><span class="icon">🤖</span> AI问答 <span class="badge">NEW</span></button>
 </nav>
 
 <main>
@@ -161,6 +116,16 @@ td{padding:8px;border-bottom:1px solid #eee}
 </div>
 
 </main>
+
+<footer>
+  <div style="margin-bottom:6px">🐟 <b>SalmonFeeding AI</b> v1.0 — 智能三文鱼养殖投喂管理系统</div>
+  <div>基于《水产动物营养与饲料学》+ CN103766250A 专利 + FAO标准 | 知识驱动 · 可解释AI</div>
+  <div style="margin-top:8px">
+    <a href="https://gitee.com/ovo231023/salmon-feeding" target="_blank">📦 Gitee</a> ·
+    <a href="docs/KNOWLEDGE_BASE.md" target="_blank">📚 领域知识库</a> ·
+    <span>Made with ❤️ by ovo231023</span>
+  </div>
+</footer>
 
 <script src="js/knowledge.js"></script>
 <script src="js/feeding.js"></script>
