@@ -106,21 +106,81 @@ function autoFillDemo() {
   showToast('✅ 已填充三文鱼标准参数', 'ok');
 }
 
-// ============ pH 修正 ============
-function phCorrection(ph) {
-  if (ph >= 6.5 && ph <= 8.0) return 1.0;
-  if (ph >= 6.0 && ph < 6.5) return 0.85;
-  if (ph >= 5.5 && ph < 6.0) return 0.6;
-  if (ph > 8.0 && ph <= 8.5) return 0.85;
-  if (ph > 8.5 && ph <= 9.0) return 0.5;
-  return 0.3;
+// ============ 各参数修正函数 ============
+function correctionFactors() {
+  const avgWeight = parseFloat(document.getElementById('avgWeight').value) || 150;
+  const count = parseInt(document.getElementById('count').value) || 5000;
+  const waterTemp = parseFloat(document.getElementById('waterTemp').value) || 14;
+  const doLevel = parseFloat(document.getElementById('doLevel').value) || 8.5;
+  const ph = parseFloat(document.getElementById('ph').value) || 7.2;
+  const ammonia = parseFloat(document.getElementById('ammonia').value) || 0.15;
+
+  const factors = [];
+
+  // 水温偏离最佳
+  if (waterTemp < 12) {
+    const f = Math.max(0.4, 0.6 + (waterTemp - 2) * 0.04);
+    factors.push({ label: '水温偏低', value: waterTemp+'℃', impact: `×${f.toFixed(2)}`, detail: `最佳12-18℃, 当前${waterTemp}℃→代谢减缓`, type: 'warn' });
+  } else if (waterTemp > 18 && waterTemp <= 20) {
+    const f = 1 - (waterTemp - 18) * 0.03;
+    factors.push({ label: '水温偏高', value: waterTemp+'℃', impact: `×${f.toFixed(2)}`, detail: `最佳12-18℃→小幅降量`, type: 'warn' });
+  } else if (waterTemp > 20) {
+    const f = (1 - 0.035 * (waterTemp - 20));
+    factors.push({ label: '高温修正', value: waterTemp+'℃', impact: `×${f.toFixed(2)}`, detail: `>20℃每升1℃减3.5%`, type: 'crit' });
+  }
+
+  // 溶氧
+  const satMgL = 14.6 - 0.4 * waterTemp;
+  const doMaxMgL = 66 / 100 * satMgL;
+  if (doLevel < 9) {
+    const doF = 1/(1+Math.exp(-0.8*(doLevel - doMaxMgL*0.6)));
+    const f = Math.round(doF*100)/100;
+    if (f < 0.95) {
+      factors.push({ label: '溶氧不足', value: doLevel+'mg/L', impact: `×${f.toFixed(2)}`, detail: `DOmaxFI≈${doMaxMgL.toFixed(1)}mg/L(66%)→摄食抑制`, type: f<0.5?'crit':'warn' });
+    }
+  }
+
+  // pH
+  let phF = 1.0;
+  if (ph < 6.5 && ph >= 6.0) phF = 0.85;
+  else if (ph < 6.0 && ph >= 5.5) phF = 0.6;
+  else if (ph < 5.5) phF = 0.3;
+  else if (ph > 8.0 && ph <= 8.5) phF = 0.85;
+  else if (ph > 8.5 && ph <= 9.0) phF = 0.5;
+  else if (ph > 9.0) phF = 0.3;
+  if (phF < 1.0) {
+    factors.push({ label: 'pH偏离', value: ph+'', impact: `×${phF.toFixed(2)}`, detail: `中性7.0→偏离${Math.abs(7-ph).toFixed(1)}`, type: phF<0.5?'crit':'warn' });
+  }
+
+  // 氨氮
+  if (ammonia > 0.2) {
+    const nh3F = Math.max(0.5, 1 - (ammonia - 0.2) * 0.8);
+    factors.push({ label: '氨氮超标', value: ammonia+'mg/L', impact: `×${nh3F.toFixed(2)}`, detail: `安全限0.2mg/L→超出${(ammonia-0.2).toFixed(2)}`, type: ammonia>0.6?'crit':'warn' });
+  }
+
+  // 体重 (大鱼修正已在引擎里)
+  if (avgWeight > 500) {
+    factors.push({ label: '大鱼代谢', value: avgWeight+'g', impact: '引擎内修正', detail: '大鱼代谢率低,投饲率自动下调', type: 'info' });
+  }
+
+  return { factors, phF, ammoniaF: ammonia>0.2?Math.max(0.5,1-(ammonia-0.2)*0.8):1.0 };
+}
+
+// ============ 自动计算(防抖) ============
+let autoTimer = null;
+function autoCalc() {
+  validateParams();
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(() => {
+    const v = validateParams();
+    if (!v.hasCritical) calcFeeding();
+  }, 400);
 }
 
 // ============ 投喂计算 ============
 function calcFeeding() {
   const v = validateParams();
-  if (v.hasCritical) { showToast('❌ 参数异常，请修正后重试', 'error'); return; }
-  if (v.hasWarning) showToast('⚠️ 部分参数偏离推荐值，已自动修正', 'warn');
+  if (v.hasCritical) { showToast('❌ 参数异常，请修正后重试', 'error'); document.getElementById('feedingResult').innerHTML=''; return; }
 
   const avgWeight = parseFloat(document.getElementById('avgWeight').value);
   const count = parseInt(document.getElementById('count').value);
@@ -131,43 +191,40 @@ function calcFeeding() {
   const fishType = document.getElementById('fishType').value;
 
   const result = FeedingEngine.calculate({ avgWeight, count, waterTemp, doLevel, fishType });
-
-  // pH 修正
-  const phF = phCorrection(ph);
-  let phNote = '';
-  if (phF < 1.0) {
-    result.dailyFeed = Math.round(result.dailyFeed * phF * 1000) / 1000;
-    result.feedPerMeal = Math.round(result.dailyFeed / result.mealsPerDay * 1000) / 1000;
-    result.feedingRate = Math.round(result.feedingRate * phF * 1000) / 1000;
-    Object.keys(result.methods).forEach(k => {
-      result.methods[k].rate = Math.round(result.methods[k].rate * phF * 1000) / 1000;
-      result.methods[k].daily = Math.round(result.methods[k].daily * phF * 1000) / 1000;
-    });
-    phNote = `⚠️ pH=${ph} 偏离中性, 投喂量×${phF.toFixed(2)}`;
-    result.warnings.unshift(phNote);
-  }
-
-  // 氨氮修正
-  if (ammonia > 0.2) {
-    const nh3F = Math.max(0.5, 1 - (ammonia - 0.2) * 0.8);
-    result.dailyFeed = Math.round(result.dailyFeed * nh3F * 1000) / 1000;
-    result.feedPerMeal = Math.round(result.dailyFeed / result.mealsPerDay * 1000) / 1000;
-    result.warnings.unshift(`⚠️ 氨氮=${ammonia}mg/L 超标, 投喂量×${nh3F.toFixed(2)}`);
-  }
-
+  const corr = correctionFactors();
   const wq = FeedingEngine.assessWaterQuality(waterTemp, doLevel, ph, ammonia);
+
+  // 应用全部修正
+  let totalCorrection = 1.0;
+  corr.factors.forEach(f => {
+    const m = f.impact.match(/×([\d.]+)/);
+    if (m) totalCorrection *= parseFloat(m[1]);
+  });
+  result.dailyFeed = Math.round(result.dailyFeed * totalCorrection * 1000) / 1000;
+  result.feedPerMeal = Math.round(result.dailyFeed / result.mealsPerDay * 1000) / 1000;
+  result.feedingRate = Math.round(result.feedingRate * totalCorrection * 1000) / 1000;
+  Object.keys(result.methods).forEach(k => {
+    result.methods[k].rate = Math.round(result.methods[k].rate * totalCorrection * 1000) / 1000;
+    result.methods[k].daily = Math.round(result.methods[k].daily * totalCorrection * 1000) / 1000;
+  });
 
   // === 渲染 ===
   let html = '<div class="card"><h3>🎯 综合推荐结果</h3>';
-  html += `<div class="result-box"><span class="val">${result.dailyFeed.toFixed(2)}</span> <span class="unit">kg/天</span> &nbsp;|&nbsp; 投饲率: <b>${result.feedingRate.toFixed(3)}%</b> &nbsp;|&nbsp; 分 <b>${result.mealsPerDay}</b> 次 (${result.mealTimes.join(', ')})<br><small style="color:#888">策略: ${result.recommendedMethod}</small></div>`;
+  html += `<div class="result-box"><span class="val">${result.dailyFeed.toFixed(2)}</span> <span class="unit">kg/天</span> &nbsp;|&nbsp; 投饲率: <b>${result.feedingRate.toFixed(3)}%</b> &nbsp;|&nbsp; 分 <b>${result.mealsPerDay}</b> 次<br><small style="color:#888">策略: ${result.recommendedMethod} | 总修正系数: ×${totalCorrection.toFixed(3)}</small></div>`;
 
-  if (phF < 1.0 || ammonia > 0.2) {
-    html += '<div style="margin-top:12px;padding:10px 14px;background:rgba(230,126,34,.08);border:1px solid rgba(230,126,34,.2);border-radius:8px;font-size:12px"><b>🌍 环境修正已应用:</b><br>';
-    if (phF < 1.0) html += `• pH=${ph} → 投喂量×${phF.toFixed(2)} (${Math.abs(7-ph).toFixed(1)}偏离中性)<br>`;
-    if (ammonia > 0.2) html += `• 氨氮=${ammonia}mg/L → 投喂量×${Math.max(0.5,1-(ammonia-0.2)*0.8).toFixed(2)}<br>`;
+  // 环境修正面板 (显示每一项的影响)
+  if (corr.factors.length > 0) {
+    html += '<div style="margin-top:12px;padding:12px 16px;background:rgba(15,40,71,.5);border:1px solid var(--border);border-radius:10px;font-size:12px">';
+    html += '<b>🌍 环境修正链 (每项独立影响):</b><br>';
+    corr.factors.forEach(f => {
+      const icon = f.type==='crit'?'🔴':f.type==='warn'?'🟡':'🔵';
+      html += `<div style="margin:4px 0;display:flex;align-items:center;gap:8px">${icon} <b>${f.label}</b>: ${f.value} → <code>${f.impact}</code> <small style="color:var(--text-dim)">${f.detail}</small></div>`;
+    });
+    html += `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">📊 综合修正: <b>×${totalCorrection.toFixed(3)}</b></div>`;
     html += '</div>';
   }
 
+  // 三法对比
   html += '<div class="grid-3" style="margin-top:16px">';
   ['table','science','growth'].forEach(key => {
     const m = result.methods[key];
@@ -175,27 +232,25 @@ function calcFeeding() {
   });
   html += '</div>';
 
-  html += '<details style="margin-top:16px"><summary style="cursor:pointer;font-weight:700;color:var(--accent)">📐 展开完整推导过程</summary><div style="margin-top:8px">';
+  // 推导
+  html += '<details style="margin-top:16px"><summary style="cursor:pointer;font-weight:700;color:var(--accent)">📐 展开推导过程</summary><div style="margin-top:8px">';
   ['table','science','growth'].forEach(key => {
     const m = result.methods[key];
     html += `<div class="card" style="padding:12px;margin-bottom:8px"><b>${m.label}</b> — ${m.source}`;
-    m.steps.forEach(s => {
-      html += `<div class="step-list"><div><b>步骤${s.step}: ${s.title}</b><br>📐 <code>${s.formula||''}</code><br>📥 ${s.input}<br>📤 ${s.result}<br><span class="src">📖 ${s.source}</span>${s.detail?`<br><small>💡 ${s.detail}</small>`:''}</div></div>`;
-    });
+    m.steps.forEach(s => html += `<div class="step-list"><div><b>步骤${s.step}: ${s.title}</b><br>📐 <code>${s.formula||''}</code><br>📥 ${s.input}<br>📤 ${s.result}<br><span class="src">📖 ${s.source}</span>${s.detail?`<br><small>💡 ${s.detail}</small>`:''}</div></div>`);
     html += '</div>';
   });
   html += '</div></details>';
 
-  result.warnings.forEach(w => {
-    html += `<div class="warning ${w.startsWith('🚨')?'critical':''}">${w}</div>`;
-  });
+  result.warnings.forEach(w => html += `<div class="warning ${w.startsWith('🚨')?'critical':''}">${w}</div>`);
   if (wq.issues.length > 0) html += `<div class="warning ${wq.status==='critical'?'critical':''}">🌊 水质评估: ${wq.issues.join(', ')}</div>`;
-  if (ammonia > 0.6) html += '<div class="warning critical">🚨 氨氮严重超标(>0.6mg/L), 建议立即换水并暂停投喂!</div>';
-  if (ph < 5.5 || ph > 9) html += '<div class="warning critical">🚨 pH严重异常! 建议立即调节水质</div>';
+  if (ammonia > 0.6) html += '<div class="warning critical">🚨 氨氮严重超标(>0.6mg/L)!</div>';
+  if (ph < 5.5 || ph > 9) html += '<div class="warning critical">🚨 pH严重异常!</div>';
 
   html += '</div>';
   document.getElementById('feedingResult').innerHTML = html;
-  if (!v.hasWarning) showToast('✅ 计算完成，参数正常', 'ok');
+  if (corr.factors.length === 0) showToast('✅ 计算完成，参数正常', 'ok');
+  else showToast(`⚙️ 已应用${corr.factors.length}项环境修正`, 'warn');
 }
 
 // ============ 投喂记录 ============
