@@ -2,136 +2,169 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>🐟 SalmonFeeding AI — 三文鱼养殖投喂管理系统</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<title>🐟 SalmonFeeding AI</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
-<header>
-  <div class="logo">
-    <div class="logo-icon">🐟</div>
-    <div>
-      <h1>SalmonFeeding AI</h1>
-      <div class="subtitle">智能投喂 · 数据驱动 · 科学养殖</div>
+<!-- ======== 顶部搜索栏 ======== -->
+<div id="searchBar">
+  <div class="search-icon">🔍</div>
+  <input id="globalSearch" placeholder="搜索 投喂计算 / 水质 / 疾病 / FCR..." oninput="onSearch(this.value)" onfocus="showSearchResults()">
+  <button class="search-btn" onclick="runSearch()">搜索</button>
+</div>
+<div id="searchResults" style="display:none"></div>
+<div id="searchOverlay" onclick="hideSearchResults()"></div>
+
+<!-- ======== 主内容区 ======== -->
+<div id="app">
+  <!-- 仪表盘 -->
+  <div class="page active" id="page-home">
+    <div class="card hero">
+      <div class="hero-icon">🐟</div>
+      <div class="hero-title">SalmonFeeding AI</div>
+      <div class="hero-sub">智能投喂 · 数据驱动</div>
+    </div>
+    <div class="quick-grid">
+      <button class="quick-btn" onclick="switchPage('calc');focusInput('avgWeight')">
+        <span class="qb-icon">📐</span><span>投喂计算</span><small>输入参数自动算</small>
+      </button>
+      <button class="quick-btn" onclick="switchPage('records')">
+        <span class="qb-icon">📋</span><span>投喂记录</span><small>${records.length}条记录</small>
+      </button>
+      <button class="quick-btn" onclick="switchPage('dashboard')">
+        <span class="qb-icon">📊</span><span>数据面板</span><small>图表+预警</small>
+      </button>
+      <button class="quick-btn" onclick="switchPage('knowledge')">
+        <span class="qb-icon">📚</span><span>知识库</span><small>12条知识源</small>
+      </button>
+      <button class="quick-btn" onclick="switchPage('chat')">
+        <span class="qb-icon">🤖</span><span>AI助手</span><small>24h在线</small>
+      </button>
+      <button class="quick-btn" onclick="switchPage('settings')">
+        <span class="qb-icon">⚙️</span><span>设置</span><small>参数默认值</small>
+      </button>
     </div>
   </div>
-  <div style="display:flex;align-items:center;gap:16px">
-    <span id="clock" style="font-size:12px;color:var(--text-dim)">--</span>
-    <span class="dark-toggle" onclick="toggleDark()" title="切换主题">🌓</span>
-  </div>
-</header>
 
-<nav>
-  <button class="active" onclick="switchTab('calculator')"><span class="icon">📐</span> 投喂计划</button>
-  <button onclick="switchTab('records')"><span class="icon">📋</span> 投喂记录</button>
-  <button onclick="switchTab('dashboard')"><span class="icon">📊</span> 数据分析</button>
-  <button onclick="switchTab('knowledge')"><span class="icon">📚</span> 知识库</button>
-  <button onclick="switchTab('chatbot')"><span class="icon">🤖</span> AI问答 <span class="badge">NEW</span></button>
-</nav>
-
-<main>
-
-<!-- ======== 投喂计划计算器 ======== -->
-<div class="tab-panel active" id="tab-calculator">
-  <div class="card">
-    <h3>📐 养殖参数录入</h3>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <div id="paramStatus" style="font-size:12px;color:#27ae60">✅ 所有参数正常</div>
-      <div id="alertBox" style="display:none;background:rgba(231,76,60,.15);border:1px solid #e74c3c;padding:8px 14px;border-radius:8px;font-size:12px;color:#f08080;max-width:500px"></div>
+  <!-- 投喂计算页 -->
+  <div class="page" id="page-calc">
+    <div class="card"><h3>📐 投喂计划</h3>
+    <div class="param-grid">
+      <button class="param-card" id="pc-fish" onclick="cycleFishType()">
+        <small>鱼种</small><b id="fishLabel">三文鱼</b>
+      </button>
+      <button class="param-card" id="pc-weight" onclick="focusInput('avgWeight')">
+        <small>平均体重</small><b><input id="avgWeight" type="number" value="150" oninput="autoCalc()" style="all:unset;width:60px;text-align:center;font-weight:700"> g</b>
+      </button>
+      <button class="param-card" id="pc-count" onclick="focusInput('count')">
+        <small>养殖数量</small><b><input id="count" type="number" value="5000" oninput="autoCalc()" style="all:unset;width:70px;text-align:center;font-weight:700"> 尾</b>
+      </button>
+      <button class="param-card" id="pc-temp" onclick="focusInput('waterTemp')">
+        <small>水温</small><b><input id="waterTemp" type="number" value="14" step="0.1" oninput="autoCalc()" style="all:unset;width:45px;text-align:center;font-weight:700"> ℃</b>
+      </button>
+      <button class="param-card" id="pc-do" onclick="focusInput('doLevel')">
+        <small>溶氧</small><b><input id="doLevel" type="number" value="8.5" step="0.1" oninput="autoCalc()" style="all:unset;width:45px;text-align:center;font-weight:700"> mg/L</b>
+      </button>
+      <button class="param-card" id="pc-ph" onclick="focusInput('ph')">
+        <small>pH</small><b><input id="ph" type="number" value="7.2" step="0.1" oninput="autoCalc()" style="all:unset;width:45px;text-align:center;font-weight:700"></b>
+      </button>
+      <button class="param-card" id="pc-nh3" onclick="focusInput('ammonia')">
+        <small>氨氮</small><b><input id="ammonia" type="number" value="0.15" step="0.01" oninput="autoCalc()" style="all:unset;width:50px;text-align:center;font-weight:700"> mg/L</b>
+      </button>
     </div>
-    <div class="form-row">
-      <div class="form-group"><label>鱼种</label><select id="fishType"><option>三文鱼(大西洋鲑)</option><option>虹鳟</option><option>其他鲑科</option></select></div>
-      <div class="form-group"><label>平均体重 (g) <span class="range">1-5000</span></label><input id="avgWeight" type="number" value="150" step="1" oninput="autoCalc()"></div>
-      <div class="form-group"><label>养殖数量 <span class="range">>0</span></label><input id="count" type="number" value="5000" step="1" oninput="autoCalc()"></div>
-      <div class="form-group"><label>水温 (℃) <span class="range">2-22</span></label><input id="waterTemp" type="number" value="14" step="0.1" oninput="autoCalc()"></div>
-      <div class="form-group"><label>溶氧 (mg/L) <span class="range">0-20</span></label><input id="doLevel" type="number" value="8.5" step="0.1" oninput="autoCalc()"></div>
-      <div class="form-group"><label>pH <span class="range">6-8</span></label><input id="ph" type="number" value="7.2" step="0.1" oninput="autoCalc()"></div>
-      <div class="form-group"><label>氨氮 (mg/L) <span class="range"><0.6</span></label><input id="ammonia" type="number" value="0.15" step="0.01" oninput="autoCalc()"></div>
-      <button class="btn btn-primary" id="calcBtn" onclick="calcFeeding()">🔍 计算投喂计划</button>
-      <button class="btn btn-outline" onclick="autoFillDemo()" title="填充一组合理示例">📋 示例</button>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn-primary" onclick="calcFeeding()" id="calcBtn" style="flex:1;padding:14px;font-size:15px">🔍 计算</button>
+      <button class="btn-outline" onclick="autoFillDemo()">📋 示例</button>
     </div>
-    <div id="liveWarnings" style="margin-top:10px"></div>
+    <div id="liveWarnings" style="margin-top:8px"></div>
+    </div>
+    <div id="feedingResult"></div>
   </div>
-  <div id="feedingResult"></div>
+
+  <!-- 记录页 -->
+  <div class="page" id="page-records">
+    <div class="card"><h3>📋 投喂记录</h3>
+    <div class="quick-add">
+      <input id="recFeed" type="number" placeholder="投喂量(kg)" step="0.1" style="flex:1">
+      <input id="recRate" type="number" placeholder="摄食率%" value="90" style="width:80px">
+      <button class="btn-primary" onclick="addRecord()">✚</button>
+    </div>
+    <div id="recordList"></div>
+    </div>
+  </div>
+
+  <!-- 仪表盘页 -->
+  <div class="page" id="page-dashboard">
+    <div class="grid-2" id="statCards"></div>
+    <div class="card"><h3>📈 趋势</h3><div class="chart-box" id="chartFeed"></div></div>
+    <div class="card"><h3>📊 生长</h3><div class="chart-box" id="chartGrowth"></div></div>
+    <div class="card"><h3>⚡ 预警</h3><div id="warnings"></div></div>
+  </div>
+
+  <!-- 知识库页 -->
+  <div class="page" id="page-knowledge">
+    <div class="card"><h3>📚 知识源</h3><div id="kbList"></div></div>
+  </div>
+
+  <!-- AI 对话页 -->
+  <div class="page" id="page-chat">
+    <div class="card" style="flex:1;display:flex;flex-direction:column">
+      <h3>🤖 AI 助手</h3>
+      <div class="quick-asks">
+        <button onclick="quickAsk('水温15度体重200g')">水温15℃ 200g</button>
+        <button onclick="quickAsk('FCR标准')">FCR标准</button>
+        <button onclick="quickAsk('密度')">密度</button>
+        <button onclick="quickAsk('疾病')">疾病</button>
+        <button onclick="quickAsk('pH范围')">pH范围</button>
+      </div>
+      <div class="chat-box" id="chatBox"><div class="chat-msg ai">👋 直接输入问题，如 "水温18度体重150g"</div></div>
+      <div class="chat-input"><input id="chatInput" placeholder="输入问题..." onkeydown="if(event.key==='Enter')askAI()"><button class="btn-primary" onclick="askAI()">发送</button></div>
+    </div>
+  </div>
+
+  <!-- 设置页 -->
+  <div class="page" id="page-settings">
+    <div class="card">
+      <h3>⚙️ 默认参数</h3>
+      <div class="setting-row"><span>默认鱼种</span><select id="defFish" onchange="saveSettings()"><option>三文鱼(大西洋鲑)</option><option>虹鳟</option></select></div>
+      <div class="setting-row"><span>默认体重 (g)</span><input id="defWeight" type="number" value="150" onchange="saveSettings()"></div>
+      <div class="setting-row"><span>默认数量</span><input id="defCount" type="number" value="5000" onchange="saveSettings()"></div>
+      <div class="setting-row"><span>默认水温 (℃)</span><input id="defTemp" type="number" value="14" step="0.1" onchange="saveSettings()"></div>
+      <div class="setting-row"><span>默认溶氧 (mg/L)</span><input id="defDO" type="number" value="8.5" step="0.1" onchange="saveSettings()"></div>
+      <button class="btn-outline" onclick="resetSettings()" style="width:100%;margin-top:8px">恢复默认</button>
+    </div>
+    <div class="card"><h3>📦 数据管理</h3>
+    <button class="btn-outline" onclick="exportData()" style="width:100%;margin-bottom:6px">📥 导出数据</button>
+    <button class="btn-outline" onclick="document.getElementById('importFile').click()" style="width:100%">📤 导入数据</button>
+    <input type="file" id="importFile" accept=".json" onchange="importData(this)" style="display:none">
+    </div>
+  </div>
 </div>
 
-<!-- ======== 投喂记录 ======== -->
-<div class="tab-panel" id="tab-records">
-  <div class="card">
-    <h3>📋 新增投喂记录</h3>
-    <div class="form-row">
-      <div class="form-group"><label>日期</label><input id="recDate" type="date"></div>
-      <div class="form-group"><label>实际投喂量 (kg)</label><input id="recFeed" type="number" step="0.1" value="45"></div>
-      <div class="form-group"><label>摄食率 (%)</label><input id="recRate" type="number" step="1" value="90"></div>
-      <div class="form-group"><label>鱼体重 (g)</label><input id="recWeight" type="number" step="1" value="152"></div>
-      <div class="form-group"><label>水温 (℃)</label><input id="recTemp" type="number" step="0.1" value="14"></div>
-      <div class="form-group"><label>溶氧 (mg/L)</label><input id="recDO" type="number" step="0.1" value="8.5"></div>
-      <div class="form-group"><label>备注</label><input id="recNote" placeholder="可选"></div>
-      <button class="btn btn-primary" onclick="addRecord()">✚ 添加记录</button>
-    </div>
-  </div>
-  <div class="card">
-    <h3>📜 历史记录</h3>
-    <table><thead><tr><th>日期</th><th>投喂量(kg)</th><th>摄食率(%)</th><th>体重(g)</th><th>水温℃</th><th>溶氧</th><th>备注</th><th>操作</th></tr></thead>
-    <tbody id="recordTable"></tbody></table>
-  </div>
+<!-- ======== 底部导航 ======== -->
+<div id="bottomNav">
+  <button onclick="switchPage('home')" class="nav-btn active" data-page="home">
+    <span class="nav-icon">🏠</span><span class="nav-label">首页</span>
+  </button>
+  <button onclick="switchPage('calc')" class="nav-btn" data-page="calc">
+    <span class="nav-icon">📐</span><span class="nav-label">计算</span>
+  </button>
+  <button onclick="switchPage('records')" class="nav-btn" data-page="records">
+    <span class="nav-icon">📋</span><span class="nav-label">记录</span>
+  </button>
+  <button onclick="switchPage('dashboard')" class="nav-btn" data-page="dashboard">
+    <span class="nav-icon">📊</span><span class="nav-label">数据</span>
+  </button>
+  <button onclick="switchPage('chat')" class="nav-btn" data-page="chat">
+    <span class="nav-icon">🤖</span><span class="nav-label">AI</span>
+  </button>
 </div>
 
-<!-- ======== 数据分析面板 ======== -->
-<div class="tab-panel" id="tab-dashboard">
-  <div class="grid-3" id="statCards"></div>
-  <div class="grid-2">
-    <div class="card"><h3>📈 投喂量趋势</h3><div class="chart-box" id="chartFeed"></div></div>
-    <div class="card"><h3>📊 生长曲线</h3><div class="chart-box" id="chartGrowth"></div></div>
-  </div>
-  <div class="card">
-    <h3>⚡ 异常预警</h3>
-    <div id="warnings"></div>
-  </div>
-</div>
-
-<!-- ======== 知识库 ======== -->
-<div class="tab-panel" id="tab-knowledge">
-  <div class="card">
-    <h3>📚 领域知识库</h3>
-    <p style="color:#888;margin-bottom:12px">以下知识来源于水产养殖教材、专利、实验数据，每个计算结果都引用这些来源</p>
-    <table><thead><tr><th>#</th><th>知识条目</th><th>来源</th><th>类型</th></tr></thead>
-    <tbody id="kbTable"></tbody></table>
-  </div>
-  <div class="card">
-    <h3>🔬 虹鳟投饲率速查表 (%体重/日)</h3>
-    <div style="overflow-x:auto" id="feedingTableDiv"></div>
-  </div>
-</div>
-
-<!-- ======== AI 问答 ======== -->
-<div class="tab-panel" id="tab-chatbot">
-  <div class="card">
-    <h3>🤖 AI 养殖助手</h3>
-    <p style="color:#888;margin-bottom:8px">基于领域知识库回答三文鱼养殖问题，每个回答标注信息来源</p>
-    <div class="chat-box" id="chatBox">
-      <div class="chat-msg ai">👋 你好！我是三文鱼养殖AI助手。你可以问我关于投喂策略、水质管理、饲料配方等方面的问题。</div>
-    </div>
-    <div class="chat-input">
-      <input id="chatInput" placeholder="例如: 水温18度、体重200g的三文鱼每天喂多少？" onkeydown="if(event.key==='Enter')askAI()">
-      <button class="btn btn-primary" onclick="askAI()">发送</button>
-    </div>
-  </div>
-</div>
-
-</main>
-
-<footer>
-  <div style="margin-bottom:6px">🐟 <b>SalmonFeeding AI</b> v1.0 — 智能三文鱼养殖投喂管理系统</div>
-  <div>基于《水产动物营养与饲料学》+ CN103766250A 专利 + FAO标准 | 知识驱动 · 可解释AI</div>
-  <div style="margin-top:8px">
-    <a href="https://gitee.com/ovo231023/salmon-feeding" target="_blank">📦 Gitee</a> ·
-    <a href="docs/KNOWLEDGE_BASE.md" target="_blank">📚 领域知识库</a> ·
-    <span>Made with ❤️ by ovo231023</span>
-  </div>
-</footer>
+<!-- 隐藏输入 -->
+<input id="fishType" type="hidden" value="三文鱼(大西洋鲑)">
 
 <script src="js/knowledge.js"></script>
 <script src="js/feeding.js"></script>
