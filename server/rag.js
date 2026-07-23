@@ -66,9 +66,15 @@ function generateAnswer(query) {
     answer += `📊 关键数据: ${numbers.join(', ')}\n\n`;
   }
 
-  // 查找最匹配的具体段落
-  if (context.includes('投饲率')) {
-    answer += '💡 请参考上方投饲率速查表，根据水温和鱼体重确定基准值，再根据溶氧和高温情况进行修正。\n';
+  // 精确匹配回答增强
+  if (context.includes('DOmaxFI') || context.includes('Remen')) {
+    answer += '💡 根据Remen et al.(2016), 维持DO在DOmaxFI以上对最大化摄食和生长至关重要。商业网箱养殖建议在实验室值基础上+40%安全余量。\n';
+  }
+  if (context.includes('孙国祥') || context.includes('生长模型')) {
+    answer += '💡 孙国祥(2014)博士论文建立了首个大西洋鲑循环水养殖投喂-生长-排泄定量模型, 经生产验证偏离度<24%。\n';
+  }
+  if (context.includes('DB63') || context.includes('行业标准')) {
+    answer += '💡 以上数据来源于青海省地方标准, 适用于虹鳟网箱养殖, 其他鲑科鱼类可参考调整。\n';
   }
 
   return { answer, sources };

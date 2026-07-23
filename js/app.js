@@ -239,11 +239,44 @@ function localQA(question) {
     return '🌡️ 三文鱼适宜水温 <b>2~22℃</b>，最佳 <b>12~18℃</b><br><br>• < 10℃: 日投喂2次<br>• 10~22℃: 日投喂3次<br>• > 20℃: 每升1℃投喂量减3.5%<br>• > 22℃ 或 < 2℃: 暂停投喂<br><br>📖 <small>来源: CN103766250A 专利 + 虹鳟投饲率表</small>';
   }
 
-  if (q.includes('你好') || q.includes('帮助') || q.includes('功能')) {
-    return '👋 我是三文鱼养殖AI助手！我能回答：<br><br>• 投喂量计算 (水温+体重)<br>• FCR饲料转化率<br>• 水质标准 (溶氧/pH/氨氮)<br>• 投喂频率建议<br>• 高温/溶氧修正<br><br>试试输入 "水温18度体重200g" 或 "FCR怎么算"';
+  if (q.includes('密度') || q.includes('养殖密度')) {
+    return '🐟 <b>虹鳟养殖密度标准 (DB63/T 1042—2011):</b><br><br>• 稚鱼(1-2g): <b>400尾/m³</b><br>• 鱼种(51-100g): <b>40尾/m³</b><br>• 商品鱼(100-150g): <b>28尾/m³</b><br>• 商品鱼(250-500g): <b>14尾/m³</b><br>• 大规格(>500g): <b><3尾/m³</b><br><br>RAS系统: 30-80 kg/m³, 网箱: 10-40 kg/m³<br>📖 <small>来源: DB63/T 1042—2011, DB63/T 2430—2025</small>';
   }
 
-  return '🤔 请提供具体参数（水温、体重等），或问 FCR/溶氧/水质标准等问题。例如：<br><br>"水温15度体重150g的三文鱼每天喂多少？"';
+  if (q.includes('疾病') || q.includes('生病') || q.includes('发病')) {
+    let ans = '🩺 <b>三文鱼常见疾病 (NY/T 755—2003):</b><br><br>';
+    KnowledgeBase.diseases.forEach(d => {
+      ans += `• <b>${d.name}</b>: ${d.symptom}<br>  💊 ${d.treatment}<br><br>`;
+    });
+    ans += '原则: 预防为主、防重于治。苗种入箱前用1-3%氯化钠浸洗。<br>📖 <small>来源: NY/T 755—2003</small>';
+    return ans;
+  }
+
+  if (q.includes('模型') || q.includes('公式') || q.includes('生长')) {
+    const m = KnowledgeBase.atlanticSalmon;
+    return `📐 <b>大西洋鲑生长与排放模型 (孙国祥 2014):</b><br><br>
+      <b>生长模型:</b> ${m.growthModel}<br>
+      <b>氮排放:</b> ${m.nitrogenModel}<br>
+      <b>磷排放:</b> ${m.phosphorusModel}<br><br>
+      模型偏离度: 生长12.68%, 氮17.93%, 磷23.65%<br><br>
+      最优参数: 投喂率<b>${m.optimal.rate}%</b>, <b>${m.optimal.frequency}次/天</b>, <b>${m.optimal.density}kg/m³</b><br>
+      📖 <small>来源: 中科院海洋研究所博士论文</small>`;
+  }
+
+  if (q.includes('mode') && (q.includes('fcr') || q.includes('模式'))) {
+    let ans = '📊 <b>FCR标准 (按养殖模式):</b><br><br>';
+    KnowledgeBase.fcrStandards.forEach(s => {
+      ans += `• ${s.mode}: 密度${s.density} → FCR <b>${s.fcr}</b><br>`;
+    });
+    ans += '<br>理想FCR: 1.0-1.2。密度越高FCR越差。<br>📖 <small>来源: FAO + 行业数据</small>';
+    return ans;
+  }
+
+  if (q.includes('你好') || q.includes('帮助') || q.includes('功能')) {
+    return '👋 我是三文鱼养殖AI助手！知识库已收录 <b>12条知识源</b> (教材+论文+标准+专利)，能回答：<br><br>• 投喂量计算 (水温+体重+溶氧)<br>• FCR饲料转化率 + 养殖模式<br>• 水质标准 + 养殖密度<br>• 疾病防控 (5种常见病)<br>• 生长模型 (孙国祥2014)<br>• DOmaxFI温度模型 (Remen2016)<br><br>试试输入 "水温18度体重200g" 或 "密度标准" 或 "疾病防治"';
+  }
+
+  return '🤔 请提供具体参数或关键词：<br><br>📐 投喂计算: "水温15度体重150g"<br>📊 FCR: "不同模式FCR"<br>🐟 密度: "密度标准"<br>🩺 疾病: "疾病防治"<br>📈 模型: "生长模型公式"';
 }
 
 // ============ 主题切换 ============
