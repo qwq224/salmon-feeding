@@ -46,10 +46,12 @@ function calcFeeding() {
   const methods = result.methods;
   ['table','science','growth'].forEach(key => {
     const m = methods[key];
+    const r = m.rate || 0;
+    const d = m.daily || 0;
     html += `<div class="card" style="padding:14px;text-align:center">
       <div style="font-size:13px;font-weight:700;margin-bottom:6px">${m.label}</div>
-      <div style="font-size:26px;font-weight:800;color:var(--accent)">${m.rate.toFixed(3)}%</div>
-      <div style="font-size:11px;color:var(--text-dim)">${m.daily.toFixed(2)} kg/天</div>
+      <div style="font-size:26px;font-weight:800;color:var(--accent)">${r.toFixed(3)}%</div>
+      <div style="font-size:11px;color:var(--text-dim)">${d.toFixed(2)} kg/天</div>
       <div style="font-size:10px;color:var(--text-dim);margin-top:4px">${m.source}</div>
     </div>`;
   });
