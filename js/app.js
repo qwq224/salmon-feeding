@@ -133,7 +133,7 @@ function correctionFactors(){
 
 // ============ Auto Calc ============
 let autoTimer=null;
-function autoCalc(){validateParams();clearTimeout(autoTimer);autoTimer=setTimeout(()=>{if(!validateParams().hasCritical)calcFeeding();},350);}
+function autoCalc(){validateParams();clearTimeout(autoTimer);autoTimer=setTimeout(()=>{if(!validateParams().hasCritical)calcFeeding(true);},350);}
 
 function calcFeeding(){
   const v=validateParams();if(v.hasCritical){showToast('❌ 参数异常','error');document.getElementById('feedingResult').innerHTML='';return;}
@@ -257,7 +257,7 @@ function importData(input){
 function init(){
   loadRecords();const s=JSON.parse(localStorage.getItem('salmon_settings')||'{}');
   if(s.weight){document.getElementById('avgWeight').value=s.weight;document.getElementById('count').value=s.count||5000;document.getElementById('waterTemp').value=s.temp||14;document.getElementById('doLevel').value=s.do||8.5;}
-  renderHome();validateParams();calcFeeding();
+  renderHome();setTimeout(function(){validateParams();calcFeeding(true);},300);
   document.getElementById('fishLabel').textContent='三文鱼';
   setInterval(()=>{try{document.getElementById('clock').textContent=new Date().toLocaleString('zh-CN')}catch(e){}},1000);
 }
