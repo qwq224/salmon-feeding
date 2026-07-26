@@ -2,61 +2,152 @@
 // app.js v3 — App式界面 + 全局搜索 + 自动计算
 // ================================================================
 let records=[], charts={}, currentPage='home';
+let chatHistory = []; // 🌟 对话历史记忆
+let webSearchEnabled = false; // 🌐 联网搜索开关
 
 // ============ 页面切换 ============
 function switchPage(name) {
   currentPage = name;
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  // Update both sidebar nav-items and mobile nav-btns
+  document.querySelectorAll('.nav-item, .nav-btn').forEach(b=>b.classList.remove('active'));
   const pg = document.getElementById('page-'+name);
   if(pg) pg.classList.add('active');
-  const btn = document.querySelector(`[data-page="${name}"]`);
-  if(btn) btn.classList.add('active');
+  document.querySelectorAll(`[data-page="${name}"]`).forEach(b=>b.classList.add('active'));
   if(name==='dashboard') renderDashboard();
   if(name==='records') renderRecords();
   if(name==='home') renderHome();
   if(name==='knowledge') renderKbList();
-  if(name==='calc'){ validateParams(); if(document.getElementById('feedingResult').innerHTML==='') calcFeeding(); }
+  if(name==='calc'){ validateParams(); setTimeout(()=>calcFeeding(), 100); }
   if(name==='settings') loadSettings();
   hideSearchResults();
 }
 
 function renderHome() {
-  document.querySelector('.quick-btn:nth-child(2) small').textContent = records.length+'条记录';
+  if(records.length===0) loadRecords();
+  const tf=records.reduce((s,r)=>s+(r.feed||0),0);
+  const ar=records.length>0?Math.round(records.reduce((s,r)=>s+(r.rate||0),0)/records.length):0;
+  const fw=records.length>0?records[records.length-1].weight:0;
+  const lw=records.length>0?records[0].weight:0;
+  const wg=lw-fw;
+  const fcr=FeedingEngine.calcFCR(tf,wg/1000);
+  document.getElementById('hsTotalFeed').textContent=tf.toFixed(1);
+  document.getElementById('hsFCR').textContent=fcr;
+  document.getElementById('hsRate').textContent=ar+'%';
+  document.getElementById('hsGrowth').textContent=wg+'g';
+  document.getElementById('homeRecCount').textContent=records.length+'条记录';
+  document.getElementById('recordsBadge').textContent=records.length;
+  // Recent records teaser
+  const teaser=document.getElementById('recentTeaser');
+  const recent=records.slice(0,4);
+  if(recent.length===0) {
+    teaser.innerHTML='<div style="text-align:center;color:var(--text-dim);padding:20px;grid-column:1/-1">暂无记录，去「投喂计算」页创建第一条吧</div>';
+  } else {
+    teaser.innerHTML=recent.map(r=>`<div class="rt-item"><div class="rt-date">${r.date}</div><div class="rt-val">${r.feed}kg</div><div style="font-size:10px;color:var(--text-dim)">食${r.rate||0}% · ${r.weight||0}g · ${r.temp||0}℃</div></div>`).join('');
+  }
 }
 
-// ============ 搜索 ============
+// ============ 搜索索引 ============
+const SEARCH_INDEX = [
+  // 投喂计算相关
+  { keys: ['投喂','计算','喂食','饲料','投饲','投饲率','喂料','日投喂','投喂量'], icon:'📐', label:'投喂计算', desc:'输入参数自动计算日投喂量', target:'calc' },
+  // 水温
+  { keys: ['水温','温度','℃','水温多少','最佳温度','高温','低温'], icon:'🌡️', label:'水温参数', desc:'三文鱼最佳12-18℃, 有效2-22℃', target:'calc', focus:'waterTemp' },
+  // 体重
+  { keys: ['体重','重量','鱼重','规格','大小','克','g','平均体重'], icon:'⚖️', label:'体重参数', desc:'输入鱼的平均体重 (1-5000g)', target:'calc', focus:'avgWeight' },
+  // 溶氧
+  { keys: ['溶氧','氧气','DO','溶解氧','溶氧量','缺氧'], icon:'🌊', label:'溶氧参数', desc:'≥9正常, <7警告, <4危急 (mg/L)', target:'calc', focus:'doLevel' },
+  // pH
+  { keys: ['ph','酸碱','酸碱度','ph值','酸','碱'], icon:'🧪', label:'pH 参数', desc:'最佳7.0-7.5, 有效6-8', target:'calc', focus:'ph' },
+  // 氨氮
+  { keys: ['氨氮','氨','氮','NH3','氨氮多少','氨氮超标'], icon:'🧫', label:'氨氮参数', desc:'<0.2安全, >0.6危急 (mg/L)', target:'calc', focus:'ammonia' },
+  // FCR
+  { keys: ['fcr','饲料系数','饵料系数','饲料转化','FCR多少','FCR标准'], icon:'📊', label:'FCR 饲料转化率', desc:'RAS 1.15 | 网箱 1.00 | 流水池 1.05', target:'chat', query:'FCR标准' },
+  // 密度
+  { keys: ['密度','养殖密度','放养密度','多少条','每立方','kg/m³'], icon:'🐟', label:'养殖密度标准', desc:'RAS 50kg/m³ | 网箱 25kg/m³', target:'chat', query:'密度' },
+  // 疾病
+  { keys: ['疾病','生病','病','弧菌','IPN','IHN','水霉','鳃病','坏死','细菌','感染','治疗','用药','症状','预防'], icon:'🩺', label:'疾病诊断与治疗', desc:'弧菌病/IPN/IHN/水霉/细菌性鳃病', target:'chat', query:'疾病' },
+  // 知识/模型
+  { keys: ['模型','科研','SGR','公式','算法','Azevedo','Remen','孙国祥','论文','专利','标准','DB','NY/T','GB'], icon:'📚', label:'知识库', desc:'12条领域知识源 (教材/论文/专利/标准)', target:'knowledge' },
+  // 记录
+  { keys: ['记录','历史','数据','日志','查看记录','投了多少','喂了多少'], icon:'📋', label:`投喂记录 (${records.length}条)`, desc:'查看、添加、删除投喂记录', target:'records' },
+  // 图表/面板
+  { keys: ['图表','趋势','面板','数据','统计','分析','报表','生长','曲线','走势'], icon:'📈', label:'数据分析面板', desc:'投喂趋势图 + 生长曲线 + 智能预警', target:'dashboard' },
+  // 水质综合
+  { keys: ['水质','水环境','环境','水体','监测','检测'], icon:'🔬', label:'水质参数说明', desc:'水温/溶氧/pH/氨氮标准与修正', target:'calc' },
+  // 设置
+  { keys: ['设置','配置','导入','导出','备份','恢复','默认','参数设置','数据管理'], icon:'⚙️', label:'系统设置', desc:'默认参数配置 + 数据导入导出', target:'settings' },
+];
+
+// ============ 搜索功能 ============
 function showSearchResults() { document.getElementById('searchResults').style.display='block'; document.getElementById('searchOverlay').style.display='block'; }
 function hideSearchResults() { document.getElementById('searchResults').style.display='none'; document.getElementById('searchOverlay').style.display='none'; }
 
 function onSearch(q) {
   if (!q || q.length<1) { hideSearchResults(); return; }
   showSearchResults();
-  const terms = ['投喂计算','FCR','溶氧','水温','pH','氨氮','密度','疾病','模型','饲料','标准'];
-  const hits = terms.filter(t=>t.includes(q)||q.includes(t));
-  const actions = [
-    {icon:'📐',label:'投喂计划计算',desc:'输入参数自动计算日投喂量',action:()=>{switchPage('calc');document.getElementById('globalSearch').value=q;}},
-    {icon:'📋',label:`投喂记录 (${records.length}条)`,desc:'查看和管理历史记录',action:()=>switchPage('records')},
-    {icon:'📊',label:'数据分析面板',desc:'图表+FCR+预警',action:()=>switchPage('dashboard')},
-    {icon:'📚',label:'知识库搜索',desc:'12条领域知识',action:()=>switchPage('knowledge')},
-    {icon:'🤖',label:`AI问答: "${q}"`,desc:'智能回答养殖问题',action:()=>{switchPage('chat');document.getElementById('chatInput').value=q;askAI();}},
-  ].filter(a=>a.label.includes(q)||q.includes(a.label.split(':')[0])||hits.some(h=>a.label.includes(h)));
-  if (actions.length===0) actions.push(...actions.slice(0,3)); // fallback
-  document.getElementById('searchResults').innerHTML=actions.map(a=>
-    `<div class="sr-item" onclick="hideSearchResults();${a.action.toString().replace(/^\(\)=>/,'').replace(/}$/,'')}">
-      <span>${a.icon}</span><div><div>${a.label}</div><small style="color:var(--text-dim)">${a.desc}</small></div>
-    </div>`
-  ).join('');
+  const lowerQ = q.toLowerCase().replace(/\s+/g,'');
+
+  // 按匹配分数排序
+  const scored = SEARCH_INDEX.map(item => {
+    let score = 0;
+    for (const key of item.keys) {
+      const kl = key.toLowerCase().replace(/\s+/g,'');
+      if (kl === lowerQ) { score += 100; }           // 完全匹配
+      else if (kl.startsWith(lowerQ)) { score += 60; } // 前缀匹配
+      else if (kl.includes(lowerQ) || lowerQ.includes(kl)) { score += 35; } // 包含
+      else {
+        // 逐字匹配
+        let chars = 0;
+        for (const ch of lowerQ) {
+          if (kl.includes(ch)) chars++;
+        }
+        if (chars >= 2 && chars >= lowerQ.length * 0.5) score += chars * 8;
+      }
+    }
+    return { ...item, score };
+  }).filter(r => r.score > 0)
+    .sort((a,b) => b.score - a.score)
+    .slice(0, 6);
+
+  // 去重(按label)
+  const seen = new Set();
+  const results = scored.filter(r => { const k = r.label; if(seen.has(k)) return false; seen.add(k); return true; });
+
+  // 始终保留 AI 问答入口
+  if (q.length >= 2) {
+    results.push({ icon:'🤖', label:`AI 问答: "${q}"`, desc:'让 AI 助手回答此问题', target:'chat', query:q, score: 1 });
+  }
+
+  if (results.length === 0) {
+    results.push({ icon:'🤖', label:`AI 问答: "${q}"`, desc:'试试让 AI 助手回答', target:'chat', query:q, score: 0 });
+  }
+
+  document.getElementById('searchResults').innerHTML = results.map((r,i) => {
+    const onClick = `hideSearchResults();_doSearchAction('${r.target}','${(r.focus||'').replace(/'/g,"\\'")}','${(r.query||'').replace(/'/g,"\\'")}')`;
+    return `<div class="sr-item" onclick="${onClick}">
+      <span class="sr-icon">${r.icon}</span>
+      <div><div>${r.label}</div><small style="color:var(--text-dim)">${r.desc}</small></div>
+    </div>`;
+  }).join('');
+}
+
+// 辅助: 执行搜索动作
+function _doSearchAction(target, focus, query) {
+  switchPage(target);
+  if (focus) { setTimeout(() => { const el = document.getElementById(focus); if(el) { el.focus(); el.select(); } }, 300); }
+  if (query) { document.getElementById('chatInput').value = query; askAI(); }
 }
 
 function runSearch() {
   const q = document.getElementById('globalSearch').value.trim();
   if (!q) return;
-  // 智能识别: 如果是参数格式, 直接跳计算
+  hideSearchResults();
+  // 智能识别参数格式: "水温15度体重200g" → 直接跳计算并填入
   const tm = q.match(/(\d+)\s*度/) || q.match(/水温\s*(\d+)/);
   const wm = q.match(/(\d+)\s*g/);
   if (tm && wm) { switchPage('calc'); document.getElementById('avgWeight').value=wm[1]; document.getElementById('waterTemp').value=tm[1]; autoCalc(); return; }
-  // 否则跳AI问答
+  // 默认: AI 问答
   switchPage('chat'); document.getElementById('chatInput').value=q; askAI();
 }
 
@@ -65,23 +156,32 @@ const LIMITS={
   avgWeight:{min:1,max:5000,label:'体重',unit:'g'},
   count:{min:1,max:999999,label:'数量',unit:'尾'},
   waterTemp:{min:2,max:22,label:'水温',unit:'℃',optimal:[12,18]},
-  doLevel:{min:0,max:20,label:'溶氧',unit:'mg/L',warn:7,crit:4,ok:9},
+  doLevel:{min:0,max:20,label:'溶氧',unit:'mg/L',warn:7,crit:4,dir:'low'},
   ph:{min:6,max:8,label:'pH',unit:'',optimal:[7,7.5]},
-  ammonia:{min:0,max:2,label:'氨氮',unit:'mg/L',warn:0.2,crit:0.6},
+  ammonia:{min:0,max:2,label:'氨氮',unit:'mg/L',warn:0.2,crit:0.6,dir:'high'},
 };
 
 function validateParams() {
-  let hasC=false,hasW=false; const issues=[];
+  let hasC=false,hasW=false;
   Object.keys(LIMITS).forEach(key=>{
     const el=document.getElementById(key); if(!el)return;
     const v=parseFloat(el.value); const l=LIMITS[key];
     const pc=document.getElementById('pc-'+({avgWeight:'weight',count:'count',waterTemp:'temp',doLevel:'do',ph:'ph',ammonia:'nh3'}[key]));
     if(pc){pc.style.borderColor='var(--border)';pc.style.boxShadow='none'}
     if(isNaN(v))return;
-    if(v<l.min||v>l.max){hasC=true;if(pc){pc.style.borderColor='#e74c3c';pc.style.boxShadow='0 0 8px rgba(231,76,60,.3)'}}
-    else if(l.crit!==undefined&&v<=l.crit){hasC=true;if(pc){pc.style.borderColor='#e74c3c';pc.style.boxShadow='0 0 8px rgba(231,76,60,.3)'}}
-    else if(l.warn!==undefined&&v<l.warn){hasW=true;if(pc){pc.style.borderColor='#e67e22';pc.style.boxShadow='0 0 6px rgba(230,126,34,.2)'}}
-    else{if(pc){pc.style.borderColor='rgba(39,174,96,.5)';pc.style.boxShadow='0 0 4px rgba(39,174,96,.15)'}}
+    // 超出绝对范围 → 危急
+    if(v<l.min||v>l.max){hasC=true;if(pc){pc.style.borderColor='#e74c3c';pc.style.boxShadow='0 0 8px rgba(231,76,60,.3)';return;}}
+    // 阈值检查 (dir='high'=高于阈值危险, dir='low'=低于阈值危险)
+    if(l.crit!==undefined){
+      const isCrit = l.dir==='high' ? v>=l.crit : v<=l.crit;
+      if(isCrit){hasC=true;if(pc){pc.style.borderColor='#e74c3c';pc.style.boxShadow='0 0 8px rgba(231,76,60,.3)'}}
+    }
+    if(l.warn!==undefined && !hasC){
+      const isWarn = l.dir==='high' ? v>=l.warn : v<=l.warn;
+      if(isWarn){hasW=true;if(pc){pc.style.borderColor='#e67e22';pc.style.boxShadow='0 0 6px rgba(230,126,34,.2)'}}
+    }
+    // 正常
+    if(!hasC&&!hasW&&pc){pc.style.borderColor='rgba(39,174,96,.5)';pc.style.boxShadow='0 0 4px rgba(39,174,96,.15)'}
   });
   document.getElementById('calcBtn').disabled = hasC;
   if(hasC)document.getElementById('liveWarnings').innerHTML='<div class="live-warn crit">🔴 参数异常, 请修正</div>';
@@ -136,51 +236,422 @@ let autoTimer=null;
 function autoCalc(){validateParams();clearTimeout(autoTimer);autoTimer=setTimeout(()=>{if(!validateParams().hasCritical)calcFeeding(true);},350);}
 
 function calcFeeding(){
-  const v=validateParams();if(v.hasCritical){showToast('❌ 参数异常','error');document.getElementById('feedingResult').innerHTML='';return;}
-  const avgWeight=parseFloat(document.getElementById('avgWeight').value);const count=parseInt(document.getElementById('count').value);
-  const waterTemp=parseFloat(document.getElementById('waterTemp').value);const doLevel=parseFloat(document.getElementById('doLevel').value);
-  const ph=parseFloat(document.getElementById('ph').value);const ammonia=parseFloat(document.getElementById('ammonia').value);
-  const fishType=document.getElementById('fishType').value;
-  const result=FeedingEngine.calculate({avgWeight,count,waterTemp,doLevel,fishType});
-  const corr=correctionFactors();const wq=FeedingEngine.assessWaterQuality(waterTemp,doLevel,ph,ammonia);
-  result.dailyFeed=Math.round(result.dailyFeed*corr.total*1000)/1000;
-  result.feedPerMeal=Math.round(result.dailyFeed/result.mealsPerDay*1000)/1000;
-  result.feedingRate=Math.round(result.feedingRate*corr.total*1000)/1000;
-  Object.keys(result.methods).forEach(k=>{result.methods[k].rate=Math.round(result.methods[k].rate*corr.total*1000)/1000;result.methods[k].daily=Math.round(result.methods[k].daily*corr.total*1000)/1000;});
+  const resultEl = document.getElementById('feedingResult');
+  // 显示加载中
+  resultEl.innerHTML = '<div class="card" style="text-align:center;padding:40px 20px"><div style="font-size:32px">⏳</div><div style="color:var(--text-dim);margin-top:8px">计算中...</div></div>';
 
-  let h='<div class="card"><h3>🎯 推荐投喂量</h3>';
-  h+=`<div class="result-box"><span class="val">${result.dailyFeed.toFixed(2)}</span> <span class="unit">kg/天</span> &nbsp;|&nbsp; <b>${result.feedingRate.toFixed(3)}%</b> &nbsp;|&nbsp; ${result.mealsPerDay}次<br><small style="color:var(--text-dim)">${result.recommendedMethod} | 总修正:×${corr.total.toFixed(3)}</small></div>`;
-  if(corr.factors.length>0){
-    h+='<div style="margin-top:8px;padding:8px 12px;background:rgba(15,40,71,.5);border:1px solid var(--border);border-radius:10px;font-size:11px"><b>🌍 环境修正:</b>';
-    corr.factors.forEach(f=>h+=`<div style="margin:2px 0">${f.type==='crit'?'🔴':f.type==='warn'?'🟡':'🔵'} ${f.label}: ${f.value} → <code>${f.impact}</code> ${f.detail}</div>`);
+  try {
+    const v=validateParams();
+    if(v.hasCritical){
+      resultEl.innerHTML = '<div class="card" style="text-align:center;padding:40px 20px"><div style="font-size:48px;opacity:0.4">⚠️</div><div style="color:var(--coral);margin-top:8px;font-size:14px">参数异常，请修正红色标记的参数后再计算</div><div style="color:var(--text-dim);font-size:11px;margin-top:4px">水温需在 2-22℃、溶氧 0-20mg/L、pH 6-8、氨氮 0-2mg/L 范围内</div></div>';
+      showToast('❌ 参数异常，请修正','error');
+      return;
+    }
+
+    const avgWeight=parseFloat(document.getElementById('avgWeight').value);
+    const count=parseInt(document.getElementById('count').value);
+    const waterTemp=parseFloat(document.getElementById('waterTemp').value);
+    const doLevel=parseFloat(document.getElementById('doLevel').value);
+    const ph=parseFloat(document.getElementById('ph').value);
+    const ammonia=parseFloat(document.getElementById('ammonia').value);
+    const fishType=document.getElementById('fishType').value;
+
+    const result=FeedingEngine.calculate({avgWeight,count,waterTemp,doLevel,fishType});
+    const corr=correctionFactors();
+    const wq=FeedingEngine.assessWaterQuality(waterTemp,doLevel,ph,ammonia);
+
+    result.dailyFeed=Math.round(result.dailyFeed*corr.total*1000)/1000;
+    result.feedPerMeal=Math.round(result.dailyFeed/result.mealsPerDay*1000)/1000;
+    result.feedingRate=Math.round(result.feedingRate*corr.total*1000)/1000;
+    // 修正周预测
+    result.weekly.totalFeed=Math.round(result.weekly.totalFeed*corr.total*100)/100;
+    result.weekly.projectedBiomass=Math.round((result.weekly.currentBiomass + result.weekly.avgGrowth*count/1000)*10)/10;
+    Object.keys(result.methods).forEach(k=>{
+      result.methods[k].rate=Math.round(result.methods[k].rate*corr.total*1000)/1000;
+      result.methods[k].daily=Math.round(result.methods[k].daily*corr.total*1000)/1000;
+    });
+
+    // ===== 综合评分 =====
+    const scores = { temp: 5, doxy: 5, ph: 5, ammonia: 5, weight: 5 };
+    if (waterTemp >= 12 && waterTemp <= 18) scores.temp = 5;
+    else if (waterTemp >= 8 && waterTemp <= 20) scores.temp = 3;
+    else scores.temp = 1;
+    if (doLevel >= 9) scores.doxy = 5;
+    else if (doLevel >= 7) scores.doxy = 4;
+    else if (doLevel >= 5) scores.doxy = 2;
+    else scores.doxy = 1;
+    if (ph >= 7.0 && ph <= 7.5) scores.ph = 5;
+    else if (ph >= 6.5 && ph <= 8.0) scores.ph = 4;
+    else if (ph >= 6.0 && ph <= 8.5) scores.ph = 2;
+    else scores.ph = 1;
+    if (ammonia <= 0.1) scores.ammonia = 5;
+    else if (ammonia <= 0.2) scores.ammonia = 4;
+    else if (ammonia <= 0.6) scores.ammonia = 2;
+    else scores.ammonia = 1;
+    if (avgWeight >= 50 && avgWeight <= 500) scores.weight = 5;
+    else if (avgWeight < 50) scores.weight = 4;
+    else scores.weight = 4;
+    const overallScore = Math.round((scores.temp + scores.doxy + scores.ph + scores.ammonia + scores.weight) / 5);
+    const scoreLabels = ['', '🔴 差', '🟠 较差', '🟡 一般', '🟢 良好', '⭐ 优秀'];
+    const scoreColors = ['', '#e74c3c', '#e67e22', '#f0c040', '#27ae60', '#4a9eff'];
+
+    // ===== 生长阶段分类 =====
+    let growthStage, stageIcon, stageDesc;
+    if (avgWeight < 10) { growthStage = '稚鱼期'; stageIcon = '🐟'; stageDesc = '开口摄食阶段，需高蛋白饲料(>50%)，每日投喂6-8次'; }
+    else if (avgWeight < 50) { growthStage = '幼鱼期'; stageIcon = '🐟'; stageDesc = '快速生长期，饲料蛋白45-50%，粒径1.5-2.5mm'; }
+    else if (avgWeight < 200) { growthStage = '生长期'; stageIcon = '🐡'; stageDesc = '主要增重阶段，饲料蛋白42-45%，粒径3-5mm'; }
+    else if (avgWeight < 1000) { growthStage = '成鱼期'; stageIcon = '🐠'; stageDesc = '稳步增重，饲料蛋白38-42%，粒径5-8mm'; }
+    else { growthStage = '上市期'; stageIcon = '🐋'; stageDesc = '接近上市规格，控制脂肪沉积，饲料蛋白35-38%'; }
+
+    let h='<div class="card"><h3>🎯 推荐投喂方案</h3>';
+
+    // ---- 综合评分条 ----
+    h+=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:8px 14px;background:rgba(0,0,0,.2);border-radius:8px">`;
+    h+=`<span style="font-size:12px;color:var(--text-dim)">综合评分</span>`;
+    h+=`<span style="font-size:18px;font-weight:700;color:${scoreColors[overallScore]}">${scoreLabels[overallScore]}</span>`;
+    h+=`<span style="font-size:12px;color:var(--text-dim)">${growthStage}</span>`;
+    h+=`<div style="flex:1;height:6px;background:rgba(255,255,255,.1);border-radius:3px;overflow:hidden">`;
+    h+=`<div style="width:${overallScore*20}%;height:100%;background:${scoreColors[overallScore]};border-radius:3px;transition:width .5s"></div></div>`;
+    h+=`<span style="font-size:11px;color:var(--text-dim)">${overallScore}/5</span>`;
+    h+=`</div>`;
+
+    // 主结果
+    h+=`<div class="result-box">`;
+    h+=`<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">`;
+    h+=`<span class="val">${result.dailyFeed.toFixed(2)}</span><span class="unit">kg/天</span>`;
+    h+=`<span style="color:var(--text-dim)">│</span>`;
+    h+=`<span style="font-size:20px;font-weight:700;color:var(--accent)">${result.feedingRate.toFixed(3)}%</span><span style="font-size:12px;color:var(--text-dim)">投饲率</span>`;
+    h+=`<span style="color:var(--text-dim)">│</span>`;
+    h+=`<b style="font-size:16px">${result.mealsPerDay}次/天</b><span style="font-size:11px;color:var(--text-dim)">分餐</span>`;
+    h+=`</div>`;
+    h+=`<div style="margin-top:8px;font-size:12px;color:var(--text-dim)">`;
+    h+=`📍 四法综合推荐 (范围: ${result.feedingRateRange}%)`;
+    h+=` &nbsp;|&nbsp; 📏 总修正系数: ×${corr.total.toFixed(3)}`;
+    h+=` &nbsp;|&nbsp; 🐟 当前总生物量: ${result.weekly.currentBiomass}kg | ${stageIcon} ${growthStage}`;
+    h+=`</div>`;
+
+    // 餐次安排
+    h+=`<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">`;
+    const mealLabels = result.mealsPerDay===3 ? ['🌅 早','☀️ 午','🌇 晚'] : ['🌅 上午','🌇 下午'];
+    result.mealTimes.forEach((t,i)=>{
+      h+=`<div style="background:rgba(74,158,255,.12);border-radius:8px;padding:6px 12px;text-align:center;font-size:11px">`;
+      h+=`<div style="color:var(--accent);font-weight:600">${mealLabels[i]}</div>`;
+      h+=`<div style="color:var(--foam);font-size:13px;font-weight:700">${result.feedPerMeal.toFixed(2)}kg</div>`;
+      h+=`<div style="color:var(--text-dim)">${t}</div></div>`;
+    });
+    h+=`</div></div>`; // result-box
+
+    // 环境修正
+    if(corr.factors.length>0){
+      h+='<div style="margin-top:10px;padding:10px 14px;background:rgba(15,40,71,.5);border:1px solid var(--border);border-radius:10px;font-size:11px"><b>🌍 环境修正因子:</b>';
+      corr.factors.forEach(f=>h+=`<div style="margin:2px 0">${f.type==='crit'?'🔴':f.type==='warn'?'🟡':'🔵'} ${f.label}: <code>${f.impact}</code> — ${f.detail}</div>`);
+      h+='</div>';
+    }
+
+    // 周预测
+    const w=result.weekly;
+    h+=`<div style="margin-top:10px;padding:14px;background:linear-gradient(135deg,rgba(39,174,96,.1),rgba(74,158,255,.08));border:1px solid rgba(39,174,96,.2);border-radius:10px">`;
+    h+=`<b style="font-size:13px">📅 7天预测</b>`;
+    h+=`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px;text-align:center">`;
+    h+=`<div><div style="font-size:20px;font-weight:800;color:var(--accent)">${w.totalFeed.toFixed(1)}</div><div style="font-size:10px;color:var(--text-dim)">周投喂总量 kg</div></div>`;
+    h+=`<div><div style="font-size:20px;font-weight:800;color:var(--kelp)">+${w.avgGrowth}g</div><div style="font-size:10px;color:var(--text-dim)">单尾预计增重</div></div>`;
+    h+=`<div><div style="font-size:20px;font-weight:800;color:var(--gold)">${w.projectedBiomass}kg</div><div style="font-size:10px;color:var(--text-dim)">7天后预计生物量</div></div>`;
+    h+=`</div></div>`;
+
+    // 四法对比
+    h+='<div style="margin-top:10px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px">';
+    ['table','science','growth','azevedo2025'].forEach(k=>{
+      const m=result.methods[k];
+      h+=`<div class="card" style="padding:10px;text-align:center"><div style="font-size:10px;font-weight:700;color:var(--text-dim)">${m.label}</div><div style="font-size:18px;font-weight:800;color:var(--accent)">${(m.rate||0).toFixed(3)}%</div><div style="font-size:10px;color:var(--text-dim)">${(m.daily||0).toFixed(2)}kg/天</div></div>`;
+    });
     h+='</div>';
+
+    // 推导过程
+    h+=`<details style="margin-top:8px"><summary style="font-size:12px;color:var(--accent);cursor:pointer">📐 查看推导过程 (4法)</summary><div style="margin-top:6px;font-size:11px">`;
+    ['table','science','growth','azevedo2025'].forEach(k=>{
+      const m=result.methods[k];
+      h+=`<div style="margin-bottom:8px;padding:8px;background:rgba(0,0,0,.15);border-radius:6px"><b>${m.label}</b> — ${m.source}`;
+      m.steps.forEach(s=>h+=`<div class="step-list"><div><b>${s.step}. ${s.title}</b>: ${s.result}<br><span class="src">📖 ${s.source}</span></div></div>`);
+      h+='</div>';
+    });
+    h+='</div></details>';
+
+    // 警告
+    if (result.warnings.length > 0) {
+      h+=`<div style="margin-top:8px">`;
+      result.warnings.forEach(w=>h+=`<div class="warning ${w.startsWith('🚨')?'critical':''}" style="font-size:11px">${w}</div>`);
+      h+=`</div>`;
+    }
+    if(wq.issues.length>0)h+=`<div class="warning" style="font-size:11px">🌊 水质评估: ${wq.issues.join(',')}</div>`;
+
+    // =================================================================
+    // 🌟 综合养殖建议 (多维度综合分析)
+    // =================================================================
+    h+=`<div style="margin-top:12px"><h3 style="margin-bottom:10px">💡 综合养殖建议</h3></div>`;
+
+    // --- 建议卡片1: 水温与投喂策略 ---
+    let tempAdvice, tempDetail;
+    if (waterTemp < 8) {
+      tempAdvice = '🌡️ 低温停食风险';
+      tempDetail = `当前水温 <b>${waterTemp}℃</b> 处于低温区间。代谢率大幅降低，消化酶活性不足。<br>
+        📌 <b>操作建议:</b> 每日投喂<b>1-2次</b>，集中在中午12:00-14:00水温最高时段；减少单次投喂量20-30%；观察鱼群是否有抢食行为判断食欲。<br>
+        📌 <b>饲料选择:</b> 使用高消化率饲料，可添加诱食剂(鱼溶浆/磷虾粉)。<br>
+        📌 <b>预期:</b> SGR约0.3-0.5%/天，增重缓慢属正常现象。`;
+    } else if (waterTemp <= 12) {
+      tempAdvice = '🌡️ 水温偏低 — 逐步恢复';
+      tempDetail = `当前水温 <b>${waterTemp}℃</b>，处于适温下限。摄食逐渐活跃但尚未达峰值。<br>
+        📌 <b>操作建议:</b> 每日投喂<b>2-3次</b>，每3-5天逐步增加投喂量5-10%；密切监测残饵情况调整。<br>
+        📌 <b>SGR预期:</b> 约0.8-1.2%/天。`;
+    } else if (waterTemp <= 18) {
+      tempAdvice = '✅ 水温处于最适区间';
+      tempDetail = `当前水温 <b>${waterTemp}℃</b> 在最佳生长温度范围内。摄食旺盛、饲料转化效率最高。<br>
+        📌 <b>操作建议:</b> 维持标准投喂策略，每日<b>3次</b>，按计算结果定量投喂。每周称重校准投饲率。<br>
+        📌 <b>注意:</b> 这是增重黄金期，保证溶氧充足可最大化生长速度。`;
+    } else if (waterTemp <= 20) {
+      tempAdvice = '⚠️ 水温偏高 — 适度减量';
+      tempDetail = `当前水温 <b>${waterTemp}℃</b> 已偏离最优区间。鱼体产生轻度热应激，食欲基因受抑制(Lai et al.,2025)。<br>
+        📌 <b>操作建议:</b> 投喂量减少<b>10-20%</b>，保持3次/天但每次量减少；加强增氧(建议纳米曝气+纯氧补充)；避开午后高温时段投喂。<br>
+        📌 <b>监测重点:</b> 每日测溶解氧(早晨最低点)，观察鱼群是否浮头。`;
+    } else {
+      tempAdvice = '🔴 高温应激 — 紧急减量';
+      tempDetail = `当前水温 <b>${waterTemp}℃</b> 已进入高温危险区！超过20℃溶氧饱和度急剧下降，鱼体代谢紊乱。<br>
+        📌 <b>紧急措施:</b> 投喂量减少<b>30-50%</b>，改为1-2次/天，仅在清晨水温最低时投喂；24小时全负荷增氧；增加换水量(>30%/天)。<br>
+        📌 <b>风险预警:</b> 持续高温(>22℃)可导致停食、免疫力下降、继发细菌性疾病。`;
+    }
+
+    // --- 建议卡片2: 溶氧管理 ---
+    let doAdvice, doDetail;
+    const satMgL = (14.6 - 0.4 * waterTemp).toFixed(1);
+    if (doLevel >= 9) {
+      doAdvice = '✅ 溶氧充足 — 摄食不受限';
+      doDetail = `当前溶氧 <b>${doLevel}mg/L</b>，饱和度约${Math.round(doLevel/(14.6-0.4*waterTemp)*100)}%，高于DOmaxFI阈值(66%≈${(14.6-0.4*waterTemp)*0.66.toFixed(1)}mg/L)。摄食效率最大化。<br>
+        📌 维持现有增氧策略，定期检查曝气设备运行状态。`;
+    } else if (doLevel >= 7) {
+      doAdvice = '⚠️ 溶氧偏低 — 摄食轻度受限';
+      doDetail = `当前溶氧 <b>${doLevel}mg/L</b>，低于最佳值(≥9mg/L)。根据Sigmoid模型，摄食效率约降至${Math.round(1/(1+Math.exp(-0.8*(doLevel-(14.6-0.4*waterTemp)*0.66*0.6)))*100)}%。<br>
+        📌 <b>改善措施:</b> 增加曝气量、检查纳米曝气管是否堵塞、适当增加换水量。<br>
+        📌 <b>监测:</b> 凌晨4-6点溶氧最低，建议安装在线监测探头自动报警。`;
+    } else if (doLevel >= 5) {
+      doAdvice = '🔶 溶氧不足 — 显著影响摄食';
+      doDetail = `当前溶氧 <b>${doLevel}mg/L</b>，已显著低于正常值。计算模型已自动下调投喂量。<br>
+        📌 <b>紧急措施:</b> ①立即全开增氧设备 ②增加纯氧补充(至≥9mg/L) ③减少投喂或暂停 ④检查生物滤池是否耗氧过高。<br>
+        📌 <b>风险:</b> 持续低氧→饲料转化率大幅下降→氨氮积累→水质恶化恶性循环。`;
+    } else {
+      doAdvice = '🚨 溶氧危急 — 建议立即停食';
+      doDetail = `当前溶氧 <b>${doLevel}mg/L</b> 已低于安全阈值(5mg/L)！鱼类面临严重缺氧风险。<br>
+        📌 <b>立即执行:</b> ①停食！②全负荷增氧+纯氧 ③大换水50%+ ④检查死鱼及时捞出 ⑤降低养殖密度。<br>
+        📌 <b>恢复:</b> 待溶氧恢复到>7mg/L后，从正常量的50%开始逐步恢复投喂。`;
+    }
+
+    // --- 建议卡片3: 水质综合 ---
+    let waterAdvice = '', waterDetail = '';
+    if (ammonia > 0.6 || ph < 5.5 || ph > 9) {
+      waterAdvice = '🚨 水质危急 — 立即处理';
+      waterDetail = '';
+      if (ammonia > 0.6) waterDetail += `🔴 氨氮 <b>${ammonia}mg/L</b> 严重超标(安全限0.2mg/L)。NH₃对鳃组织有强烈毒性。<br>📌 <b>措施:</b> 停食2-3天 + 每日换水50% + 添加沸石粉(1kg/m³) + 检查生物滤池硝化功能。<br>`;
+      if (ph < 5.5) waterDetail += `🔴 pH <b>${ph}</b> 过低，硝化菌受抑制，氨氮将加速积累。<br>📌 <b>措施:</b> 投加碳酸氢钠(NaHCO₃)50-100g/m³，逐步调节至7.0+。<br>`;
+      if (ph > 9) waterDetail += `🔴 pH <b>${ph}</b> 过高，游离氨(NH₃)占比急剧上升(>50%)，毒性剧增。<br>📌 <b>措施:</b> 减少曝气(降低CO₂吹脱) + 添加氯化钙或稀盐酸缓慢中和。<br>`;
+    } else if (ammonia > 0.2 || ph < 6 || ph > 8.5) {
+      waterAdvice = '⚠️ 水质预警 — 密切关注';
+      waterDetail = '';
+      if (ammonia > 0.2) waterDetail += `🟡 氨氮 <b>${ammonia}mg/L</b> 偏高。减少投喂15%，增加换水频率，检查滤池。<br>`;
+      if (ph < 6) waterDetail += `🟡 pH <b>${ph}</b> 偏低。补充碳酸氢钠，每日检测pH变化趋势。<br>`;
+      if (ph > 8.5) waterDetail += `🟡 pH <b>${ph}</b> 偏高。减少曝气强度，监测游离氨占比。<br>`;
+    } else {
+      waterAdvice = '✅ 水质正常';
+      waterDetail = `氨氮 <b>${ammonia}mg/L</b> (安全)，pH <b>${ph}</b> (正常范围)。维持现有换水频率和生物滤池管理。<br>
+        📌 <b>日常管理:</b> 每日早晚各测一次溶氧和温度；每周测氨氮+亚硝酸盐+pH；每月清洗一次生物滤池(分批，避免硝化菌流失)。`;
+    }
+
+    // --- 建议卡片4: 生长阶段策略 ---
+    const stageAdvice = {
+      '稚鱼期': `📌 <b>稚鱼期管理要点:</b><br>• 开口饲料粒径0.3-0.8mm，逐步过渡到1.0mm<br>• 投喂频率6-8次/天，少量多次避免残饵<br>• 水温严格控制在12-16℃，波动<±1℃/天<br>• 光照强度500-1000lux，避免直射光<br>• 每周抽样30尾称重，计算均匀度(CV<15%为优)`,
+      '幼鱼期': `📌 <b>幼鱼期管理要点:</b><br>• 饲料蛋白≥45%，脂肪≥15%，添加免疫增强剂(β-葡聚糖)<br>• 投喂4-6次/天，根据残饵情况动态调整<br>• 每月分筛1-2次，将大小鱼分池饲养<br>• 疫苗接种窗口(20-50g)，建议注射IPN+IHN疫苗`,
+      '生长期': `📌 <b>生长期管理要点:</b><br>• 当前是饲料转化效率最高的阶段，应重点优化FCR<br>• 每2周抽样称重，依据实际增重校准投饲率<br>• 饲料中脂肪可提升至22-28%，蛋白质42-45%<br>• 密度管理: RAS系统≤50kg/m³，网箱≤25kg/m³`,
+      '成鱼期': `📌 <b>成鱼期管理要点:</b><br>• 控制脂肪沉积，适当提高蛋白/能量比<br>• 收获前3-4周逐步减少投喂(清肠)，改善肉质<br>• 每月抽样测量体长/体重，计算肥满度(K=W/L³×100)<br>• 目标FCR: 网箱1.0-1.1，RAS 1.1-1.2`,
+      '上市期': `📌 <b>上市期管理要点:</b><br>• 接近上市规格(通常4-6kg)，投喂策略转向维持+品质优化<br>• 添加虾青素(40-60mg/kg饲料)改善肉色<br>• 收获前禁食3-7天(视水温而定)，清空肠道内容物<br>• 安排出鱼计划，分批捕捞避免应激`
+    };
+
+    // --- 建议卡片5: 经济概算 ---
+    const feedCostPerKg = 8.5; // 人民币/kg饲料(鲑鳟鱼商品料均价)
+    const salmonPricePerKg = 60; // 人民币/kg活鱼(2024年行情)
+    const dailyFeedCost = result.dailyFeed * feedCostPerKg;
+    const weeklyFeedCost = w.totalFeed * feedCostPerKg;
+    const weeklyGainKg = w.avgGrowth * count / 1000;
+    const weeklyRevenue = weeklyGainKg * salmonPricePerKg;
+    const feedEfficiency = weeklyGainKg > 0 ? (weeklyRevenue / weeklyFeedCost).toFixed(1) : '—';
+
+    h+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">`;
+
+    // 水温建议卡片
+    h+=`<div style="padding:12px;background:rgba(15,40,71,.5);border:1px solid var(--border);border-radius:10px;font-size:11px;line-height:1.7">`;
+    h+=`<b style="font-size:13px;color:var(--accent)">${tempAdvice}</b><br>${tempDetail}</div>`;
+
+    // 溶氧建议卡片
+    h+=`<div style="padding:12px;background:rgba(15,40,71,.5);border:1px solid var(--border);border-radius:10px;font-size:11px;line-height:1.7">`;
+    h+=`<b style="font-size:13px;color:var(--accent)">${doAdvice}</b><br>${doDetail}</div>`;
+
+    // 水质建议卡片
+    h+=`<div style="padding:12px;background:rgba(15,40,71,.5);border:1px solid var(--border);border-radius:10px;font-size:11px;line-height:1.7">`;
+    h+=`<b style="font-size:13px;color:var(--accent)">🧪 ${waterAdvice}</b><br>${waterDetail}</div>`;
+
+    // 生长阶段卡片
+    h+=`<div style="padding:12px;background:rgba(15,40,71,.5);border:1px solid var(--border);border-radius:10px;font-size:11px;line-height:1.7">`;
+    h+=`<b style="font-size:13px;color:var(--accent)">${stageIcon} ${growthStage} — 阶段管理策略</b><br>${stageAdvice[growthStage]||stageDesc}</div>`;
+
+    h+=`</div>`; // grid
+
+    // --- 经济概算卡片 ---
+    h+=`<div style="margin-top:8px;padding:12px;background:linear-gradient(135deg,rgba(240,192,64,.1),rgba(240,192,64,.03));border:1px solid rgba(240,192,64,.2);border-radius:10px;font-size:11px">`;
+    h+=`<b style="font-size:13px;color:var(--gold)">💰 经济概算</b>`;
+    h+=`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:6px;text-align:center">`;
+    h+=`<div><div style="font-size:14px;font-weight:700;color:var(--foam)">¥${dailyFeedCost.toFixed(0)}</div><div style="font-size:9px;color:var(--text-dim)">日饲料成本</div></div>`;
+    h+=`<div><div style="font-size:14px;font-weight:700;color:var(--foam)">¥${weeklyFeedCost.toFixed(0)}</div><div style="font-size:9px;color:var(--text-dim)">周饲料成本</div></div>`;
+    h+=`<div><div style="font-size:14px;font-weight:700;color:var(--kelp)">¥${weeklyRevenue.toFixed(0)}</div><div style="font-size:9px;color:var(--text-dim)">周增重价值</div></div>`;
+    h+=`<div><div style="font-size:14px;font-weight:700;color:var(--gold)">${feedEfficiency}</div><div style="font-size:9px;color:var(--text-dim)">投入产出比</div></div>`;
+    h+=`</div>`;
+    h+=`<div style="margin-top:6px;font-size:10px;color:var(--text-dim)">📌 按饲料 ¥${feedCostPerKg}/kg、活鱼 ¥${salmonPricePerKg}/kg 估算 · 不含人工/水电/折旧</div>`;
+    h+=`</div>`;
+
+    // --- FCR 分析与优化 ---
+    const estFCR = result.weekly.totalFeed / (w.avgGrowth * count / 1000);
+    const fcrRating = estFCR < 1.1 ? '优秀' : estFCR < 1.3 ? '良好' : estFCR < 1.5 ? '一般' : '偏高';
+    const fcrColor = estFCR < 1.1 ? 'var(--kelp)' : estFCR < 1.3 ? 'var(--accent)' : estFCR < 1.5 ? 'var(--gold)' : 'var(--coral)';
+    h+=`<div style="margin-top:8px;padding:12px;background:rgba(15,40,71,.5);border:1px solid var(--border);border-radius:10px;font-size:11px;line-height:1.7">`;
+    h+=`<b style="font-size:13px;color:var(--accent)">📊 FCR 饲料转化率分析</b><br>`;
+    h+=`预计FCR: <b style="color:${fcrColor}">${estFCR.toFixed(2)}</b> (${fcrRating}) `;
+    if (estFCR > 1.5) {
+      h+=`— FCR偏高，建议检查:<br>• 是否过度投喂(残饵多)→减少单次量5-10%观察<br>• 溶氧是否不足→低于7mg/L会显著降低转化效率<br>• 饲料品质是否合格→检查蛋白质/脂肪含量及新鲜度<br>• 鱼体是否健康→检查是否有亚临床疾病`;
+    } else if (estFCR > 1.3) {
+      h+=`— 有优化空间:<br>• 精确控制投喂量(避免过投)，使用自动投喂机可提升FCR 5-10%<br>• 保持溶氧≥9mg/L，FCR可进一步降低0.05-0.1`;
+    } else {
+      h+=`— 饲料转化效率理想，继续保持当前管理策略。<br>• 行业参考: RAS系统FCR 1.15 | 网箱FCR 1.00 | 流水池FCR 1.05`;
+    }
+    h+=`</div>`;
+
+    // --- 风险提示 ---
+    const risks = [];
+    if (waterTemp > 20) risks.push('🔴 高温: 持续>22℃将导致停食和死亡率上升');
+    if (doLevel < 5) risks.push('🔴 缺氧: <5mg/L可导致急性死亡');
+    if (ammonia > 0.4) risks.push('🟡 氨氮: >0.4mg/L有慢性毒性风险');
+    if (ph < 6 || ph > 8.5) risks.push('🟡 pH异常: 影响鳃功能和硝化系统');
+    if (avgWeight > 3000 && waterTemp > 18) risks.push('🟡 大规格+高温: 双重应激，极易爆发疾病');
+    if (risks.length > 0) {
+      h+=`<div style="margin-top:8px;padding:10px 14px;background:rgba(231,76,60,.08);border:1px solid rgba(231,76,60,.2);border-radius:10px;font-size:11px">`;
+      h+=`<b>⚠️ 风险提示</b><br>`;
+      risks.forEach(r => h+=`<div style="margin:2px 0">${r}</div>`);
+      h+=`</div>`;
+    }
+
+    // 保存按钮
+    h+=`<div style="margin-top:10px;display:flex;gap:8px">`;
+    h+=`<button class="btn-primary" onclick="saveFeedingPlan()" style="flex:1;padding:12px;font-size:13px">💾 保存此投喂计划</button>`;
+    h+=`<button class="btn-outline" onclick="switchPage('records')" style="padding:12px 24px">📋 查看投喂记录</button>`;
+    h+=`</div>`;
+
+    h+='</div>'; // card
+    resultEl.innerHTML = h;
+    const msg = corr.factors.length === 0 ? '✅ 四法计算完成' : `⚙️ 已应用${corr.factors.length}项环境修正`;
+    showToast(msg, corr.factors.length === 0 ? 'ok' : 'warn');
+
+  } catch (err) {
+    console.error('calcFeeding error:', err);
+    resultEl.innerHTML = `<div class="card" style="text-align:center;padding:40px 20px">
+      <div style="font-size:48px;opacity:0.4">😵</div>
+      <div style="color:var(--coral);margin-top:8px;font-size:14px">计算出错，请刷新页面后重试</div>
+      <div style="color:var(--text-dim);font-size:10px;margin-top:4px;max-width:300px;margin-left:auto;margin-right:auto;word-break:break-all">${err.message}</div>
+      <button class="btn-outline" onclick="calcFeeding()" style="margin-top:12px;padding:8px 20px">🔄 重试</button>
+    </div>`;
+    showToast('❌ 计算出错','error');
   }
-  h+='<div class="grid-2" style="margin-top:8px;gap:6px">';
-  ['table','science','growth'].forEach(k=>{const m=result.methods[k];h+=`<div class="card" style="padding:10px;text-align:center"><div style="font-size:11px;font-weight:700">${m.label}</div><div style="font-size:20px;font-weight:800;color:var(--accent)">${(m.rate||0).toFixed(3)}%</div><div style="font-size:10px;color:var(--text-dim)">${(m.daily||0).toFixed(2)}kg</div></div>`;});
-  h+='</div>';
-  h+=`<details style="margin-top:8px"><summary style="font-size:12px;color:var(--accent);cursor:pointer">📐 推导过程</summary><div style="margin-top:6px;font-size:11px">`;
-  ['table','science','growth'].forEach(k=>{const m=result.methods[k];h+=`<div style="margin-bottom:6px"><b>${m.label}</b> — ${m.source}`;m.steps.forEach(s=>h+=`<div class="step-list"><div><b>${s.step}.${s.title}</b> → ${s.result}<br><span class="src">${s.source}</span></div></div>`);h+='</div>';});
-  h+='</div></details>';
-  result.warnings.forEach(w=>h+=`<div class="warning ${w.startsWith('🚨')?'critical':''}" style="font-size:11px">${w}</div>`);
-  if(wq.issues.length>0)h+=`<div class="warning" style="font-size:11px">🌊 水质: ${wq.issues.join(',')}</div>`;
-  if(ammonia>0.6)h+='<div class="warning critical" style="font-size:11px">🚨 氨氮严重超标!</div>';
-  if(ph<5.5||ph>9)h+='<div class="warning critical" style="font-size:11px">🚨 pH严重异常!</div>';
-  h+='</div>';document.getElementById('feedingResult').innerHTML=h;
-  if(corr.factors.length===0)showToast('✅ 计算完成','ok');else showToast('⚙️ 已应用'+corr.factors.length+'项修正','warn');
+}
+
+// ============ 保存投喂计划 ============
+function saveFeedingPlan(){
+  const avgWeight=parseFloat(document.getElementById('avgWeight').value)||150;
+  const count=parseInt(document.getElementById('count').value)||5000;
+  const waterTemp=parseFloat(document.getElementById('waterTemp').value)||14;
+  const doLevel=parseFloat(document.getElementById('doLevel').value)||8.5;
+  const result=FeedingEngine.calculate({avgWeight,count,waterTemp,doLevel,fishType:document.getElementById('fishType').value});
+  const corr=correctionFactors();
+  const plan={
+    date:new Date().toISOString(),
+    params:{avgWeight,count,waterTemp,doLevel,fishType:document.getElementById('fishType').value},
+    result:{
+      dailyFeed:Math.round(result.dailyFeed*corr.total*1000)/1000,
+      feedingRate:result.feedingRate,
+      mealsPerDay:result.mealsPerDay,
+      feedPerMeal:result.feedPerMeal,
+      weekly:result.weekly,
+    },
+  };
+  const plans=JSON.parse(localStorage.getItem('salmon_plans')||'[]');
+  plans.unshift(plan);
+  localStorage.setItem('salmon_plans',JSON.stringify(plans.slice(0,20)));
+  showToast('✅ 投喂计划已保存 ('+plans.length+'条)','ok');
 }
 
 // ============ 记录 ============
 function addRecord(){
   const feed=parseFloat(document.getElementById('recFeed').value);if(!feed||feed<=0)return;
-  records.unshift({date:new Date().toISOString().split('T')[0],feed,rate:parseInt(document.getElementById('recRate').value)||90,temp:parseFloat(document.getElementById('waterTemp').value)||14,doLevel:parseFloat(document.getElementById('doLevel').value)||8.5,weight:parseFloat(document.getElementById('avgWeight').value)||150});
-  saveRecords();renderRecords();document.getElementById('recFeed').value='';showToast('✅ 已保存','ok');
+  records.unshift({
+    date:new Date().toISOString().split('T')[0],
+    feed:Math.round(feed*10)/10,
+    rate:parseInt(document.getElementById('recRate').value)||90,
+    weight:Math.round(parseFloat(document.getElementById('recWeight').value)||150),
+    temp:Math.round((parseFloat(document.getElementById('recTemp').value)||14)*10)/10,
+    doLevel:Math.round((parseFloat(document.getElementById('recDO').value)||8.5)*10)/10,
+  });
+  saveRecords();renderRecords();document.getElementById('recFeed').value='';
+  updateBadges();showToast('✅ 已保存','ok');
 }
-function delRecord(i){records.splice(i,1);saveRecords();renderRecords();}
+function delRecord(i){records.splice(i,1);saveRecords();renderRecords();updateBadges();}
+function updateBadges(){
+  document.getElementById('recordsBadge').textContent=records.length;
+  document.getElementById('homeRecCount').textContent=records.length+'条记录';
+}
 function renderRecords(){
-  document.getElementById('recordList').innerHTML=records.slice(0,30).map((r,i)=>`<div class="record-item"><div class="ri-left"><span class="ri-date">${r.date}</span><span>喂${r.feed}kg · 食${r.rate}% · ${r.weight}g · ${r.temp}℃</span></div><div><span class="ri-val">${r.feed}kg</span> <button class="btn-danger btn-sm" onclick="delRecord(${i})">✕</button></div></div>`).join('')||'<div style="text-align:center;color:var(--text-dim);padding:20px">暂无记录</div>';
+  const list=records.slice(0,50);
+  const tbody=document.querySelector('#recordTable tbody');
+  if(tbody){
+    tbody.innerHTML=list.map((r,i)=>`<tr>
+      <td>${r.date}</td>
+      <td><b>${r.feed} kg</b></td>
+      <td>${r.rate||0}%</td>
+      <td>${r.weight||0} g</td>
+      <td>${(r.temp||0).toFixed(1)} ℃</td>
+      <td>${(r.doLevel||0).toFixed(1)} mg/L</td>
+      <td><button class="btn-danger btn-sm" onclick="delRecord(${i})">删除</button></td>
+    </tr>`).join('')||'<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:30px">📭 暂无记录 — 使用上方快速添加或去投喂计算页</td></tr>';
+  }
 }
 function saveRecords(){try{localStorage.setItem('salmon_records',JSON.stringify(records));}catch(e){}}
-function loadRecords(){try{records=JSON.parse(localStorage.getItem('salmon_records')||'[]');}catch(e){records=[]};if(records.length===0){const d=new Date();for(let i=14;i>=0;i--){const dd=new Date(d);dd.setDate(dd.getDate()-i);records.push({date:dd.toISOString().split('T')[0],feed:Math.round((40+Math.random()*20)*10)/10,rate:80+Math.floor(Math.random()*20),weight:Math.round(120+i*2.2+Math.random()*5),temp:Math.round((13+Math.random()*4)*10)/10,doLevel:Math.round((7.5+Math.random()*3)*10)/10});}saveRecords();}}
+function loadRecords(){
+  const dv=localStorage.getItem('salmon_data_version');
+  if(dv!=='2'){localStorage.removeItem('salmon_records');localStorage.setItem('salmon_data_version','2');}
+  try{records=JSON.parse(localStorage.getItem('salmon_records')||'[]');}catch(e){records=[]};
+  if(records.length===0){_generateDemoRecords();saveRecords();}
+}
+function _generateDemoRecords(){
+  records=[];const d=new Date();
+  const demoFeeds=[42,45,38,50,48,55,44,52,47,58,43,51,46,53,49];
+  const demoRates=[85,88,82,90,87,92,84,89,86,93,83,91,85,90,88];
+  const demoWeights=[120,122,125,128,131,134,137,141,145,149,153,157,161,166,170];
+  const demoTemps=[13.5,14.0,13.8,14.2,14.5,15.0,14.8,15.2,15.5,15.8,16.0,15.5,15.0,14.5,14.0];
+  const demoDOs=[8.0,8.2,8.1,8.5,8.3,8.8,8.4,9.0,8.6,9.2,8.7,9.1,8.5,8.3,8.0];
+  for(let i=0;i<15;i++){
+    const dd=new Date(d);dd.setDate(dd.getDate()-(14-i));
+    records.push({
+      date:dd.toISOString().split('T')[0],
+      feed:demoFeeds[i],
+      rate:demoRates[i],
+      weight:demoWeights[i],
+      temp:demoTemps[i],
+      doLevel:demoDOs[i]
+    });
+  }
+  saveRecords();
+}
 
 // ============ 仪表盘 ============
 function renderDashboard(){
@@ -202,28 +673,208 @@ function renderDashboard(){
 
 // ============ 知识库 ============
 function renderKbList(){
-  document.getElementById('kbList').innerHTML=KnowledgeBase.getKnowledgeSources().map(k=>`<div class="kb-item"><div class="kb-num">${k.id}</div><div class="kb-info"><div class="kb-title">${k.title}</div><div class="kb-src">${k.source}</div></div><span class="kb-tag">${k.type}</span></div>`).join('');
+  document.getElementById('kbList').innerHTML=KnowledgeBase.getKnowledgeSources().map(k=>{
+    const hasLink = k.link && k.link !== '#';
+    return `<div class="kb-item">
+      <div class="kb-header">
+        <div class="kb-num">${k.id}</div>
+        <div class="kb-title">${k.title}</div>
+        <span class="kb-tag">${k.type}</span>
+      </div>
+      <div class="kb-src">📖 ${k.source}</div>
+      <div class="kb-desc">${k.desc||''}</div>
+      <div class="kb-footer">
+        ${hasLink
+          ? `<a href="${k.link}" target="_blank" rel="noopener" class="kb-link" title="在新标签页打开原始来源">🔗 查看原文 →</a>`
+          : `<span class="kb-link-disabled">📎 无在线链接</span>`}
+      </div>
+    </div>`;
+  }).join('');
 }
 
-// ============ AI ============
-function askAI(){
-  const q=document.getElementById('chatInput').value.trim();if(!q)return;
-  const box=document.getElementById('chatBox');box.innerHTML+=`<div class="chat-msg user">${q}</div>`;document.getElementById('chatInput').value='';box.scrollTop=box.scrollHeight;
-  setTimeout(()=>{box.innerHTML+=`<div class="chat-msg ai">${localQA(q)}</div>`;box.scrollTop=box.scrollHeight;},400);
-}
-function quickAsk(q){document.getElementById('chatInput').value=q;askAI();}
+// ============ 🌟 AI 智能对话 ============
 
-function localQA(q){
-  const lq=q.toLowerCase();const tm=lq.match(/水温\s*(\d+)/)||lq.match(/(\d+)\s*度/);const wm=lq.match(/体重\s*(\d+)\s*g/i)||lq.match(/(\d+)\s*g[^/]/);
-  if(tm&&wm){const t=parseFloat(tm[1]),w=parseFloat(wm[1]);const r=FeedingEngine.calculate({avgWeight:w,count:1000,waterTemp:t,doLevel:9,fishType:'三文鱼'});return`📐 水温<b>${t}℃</b> 体重<b>${w}g</b>:<br>• 推荐投饲率: <b>${r.feedingRate.toFixed(3)}%</b><br>• 千尾日投喂: <b>${r.dailyFeed.toFixed(2)}kg</b><br>• 分<b>${r.mealsPerDay}</b>次<br>• 三法: 查表${r.methods.table.rate.toFixed(2)}% | 科研${r.methods.science.rate.toFixed(2)}% | 生长${r.methods.growth.rate.toFixed(2)}%`;}
-  if(lq.includes('fcr'))return'📊 <b>FCR</b>=投喂量÷增重。理想1.0-1.2,>2.0需检查。<br>RAS:1.15 | 网箱:1.00 | 流水:1.05';
-  if(lq.includes('溶氧'))return'🌊 三文鱼≥9mg/L, 虹鳟6-7mg/L。DOmaxFI(15℃)=66%≈9.2mg/L, 低于此值Sigmoid递减摄食。';
-  if(lq.includes('水温'))return'🌡️ 三文鱼2-22℃(最佳12-18)。<10℃喂2次,≥10℃喂3次。>20℃每升1℃减3.5%。';
-  if(lq.includes('密度')){let a='🐟 <b>密度标准:</b><br>';KnowledgeBase.fcrStandards.forEach(s=>a+=`${s.mode}:${s.density}→FCR${s.fcr}<br>`);return a;}
-  if(lq.includes('疾病')){let a='🩺 <b>常见病:</b><br>';KnowledgeBase.diseases.forEach(d=>a+=`<b>${d.name}</b>: ${d.treatment}<br>`);return a;}
-  if(lq.includes('模型'))return'📐 <b>三模型:</b>①二维插值(教材) ②FI=αBW^βe^(γT)h(DO)(Azevedo2026) ③SGR映射(FAO+孙国祥2014)';
-  if(lq.includes('你好')||lq.includes('帮助'))return'👋 智能搜索已上线! 顶部搜索框可搜: 投喂计算/FCR/溶氧/水温/密度/疾病/模型。或输入 "水温15度体重200g" 直接算!';
-  return'🤔 试试: "水温15度体重200g" | "FCR" | "密度" | "疾病" | "pH范围"';
+// 🌐 联网搜索开关
+function toggleWebSearch() {
+  webSearchEnabled = !webSearchEnabled;
+  const badge = document.getElementById('webSearchBadge');
+  const btn = document.getElementById('webSearchToggle');
+  if (webSearchEnabled) {
+    badge.textContent = '开';
+    badge.className = 'toggle-badge on';
+    btn.classList.add('active');
+    showToast('🌐 联网搜索已开启 — AI 将搜索最新信息', 'ok');
+  } else {
+    badge.textContent = '关';
+    badge.className = 'toggle-badge off';
+    btn.classList.remove('active');
+  }
+}
+
+// 简易 Markdown → HTML 渲染
+function renderMarkdown(text) {
+  // 预处理 [来源:N] 标记为可点击的 sup 标签
+  text = text.replace(/\[来源:(\d+)\]/g, '<sup class="src-ref" onclick="scrollToSource($1)" title="点击查看来源 $1">[$1]</sup>');
+  if (typeof marked !== 'undefined' && marked.parse) {
+    try {
+      marked.setOptions?.({ breaks: true, gfm: true });
+      return marked.parse(text);
+    } catch(e) { /* 回退 */ }
+  }
+  // 简易渲染
+  return text
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/\n## (.+)/g, '<h3>$1</h3>')
+    .replace(/\n### (.+)/g, '<h4>$1</h4>')
+    .replace(/\n- (.+)/g, '\n<li>$1</li>')
+    .replace(/\n\d+\. (.+)/g, '\n<li>$1</li>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\n/g, '<br>');
+}
+
+// 构建可展开的来源卡片
+function _buildSourceCards(sources, msgId, webSearchUsed) {
+  if (!sources || sources.length === 0) return '';
+  const webLabel = webSearchUsed ? ' · 🌐 含网络搜索结果' : '';
+  let html = `<div class="source-section">
+    <div class="source-header" onclick="this.parentElement.classList.toggle('expanded')">
+      <span>📚 引用来源 (${sources.length}条)${webLabel}</span>
+      <span class="source-expand-icon">▼</span>
+    </div>
+    <div class="source-list" id="sources-${msgId}">`;
+  sources.forEach((s, i) => {
+    const relStars = '⭐'.repeat(Math.min(5, s.relevance || 1));
+    const typeIcon = (s.source || '').includes('🌐') ? '🌐' : (s.source || '').includes('📄') ? '📄' : '📖';
+    const linkHtml = s.link ? `<a href="${s.link}" target="_blank" rel="noopener" class="src-link">🔗 打开原文</a>` : '';
+    html += `<div class="source-item" id="src-${s.id}">
+      <div class="source-item-header">
+        <span class="source-num">${typeIcon} [来源:${s.id}]</span>
+        <span class="source-title">${s.title}</span>
+        <span class="source-relevance">${relStars}</span>
+        ${linkHtml}
+      </div>
+      <div class="source-snippet">${s.snippet || '（原文较长，已截取前300字）'}</div>
+      <div class="source-meta">出处: ${s.source || '知识库'} ${s.chapter ? '· 第'+s.chapter+'章' : ''}</div>
+    </div>`;
+  });
+  html += '</div></div>';
+  return html;
+}
+
+// 滚动到指定来源
+let _pendingSources = {};
+function scrollToSource(id) {
+  const el = document.getElementById('src-' + id);
+  if (el) {
+    // 先展开来源面板
+    const section = el.closest('.source-section');
+    if (section && !section.classList.contains('expanded')) {
+      section.classList.add('expanded');
+    }
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.style.background = 'rgba(74,158,255,.2)';
+    setTimeout(() => { el.style.background = ''; }, 2000);
+  }
+}
+
+// 显示加载动画
+function _showLoading() {
+  const box = document.getElementById('chatBox');
+  const loadId = '_load_' + Date.now();
+  const searchNote = webSearchEnabled ? '<span style="font-size:10px;color:var(--gold)"> 🌐 正在搜索网络...</span>' : '';
+  box.innerHTML += `<div class="chat-msg ai" id="${loadId}">
+    <div class="chat-role">🤖 鲑鱼博士${searchNote}</div>
+    <div class="chat-content loading-dots">正在思考<span>.</span><span>.</span><span>.</span></div>
+  </div>`;
+  box.scrollTop = box.scrollHeight;
+  return loadId;
+}
+
+function askAI() {
+  const q = document.getElementById('chatInput').value.trim();
+  if (!q) return;
+
+  const box = document.getElementById('chatBox');
+  const searchLabel = webSearchEnabled ? ' <span style="font-size:10px;opacity:.6">🌐 联网</span>' : '';
+
+  // 添加用户消息
+  box.innerHTML += `<div class="chat-msg user">
+    <div class="chat-content">${q.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}${searchLabel}</div>
+  </div>`;
+  chatHistory.push({ role: 'user', content: q });
+  document.getElementById('chatInput').value = '';
+  box.scrollTop = box.scrollHeight;
+
+  // 加载动画
+  const loadId = _showLoading();
+
+  // 调用 API
+  fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: q,
+      history: chatHistory.slice(0, -1),
+      searchWeb: webSearchEnabled,
+    }),
+  }).then(r => r.json()).then(data => {
+    const el = document.getElementById(loadId);
+    const msgId = loadId.replace('_load_', 'msg_');
+    const rendered = renderMarkdown(data.answer);
+    const sourcesHtml = _buildSourceCards(data.sources, msgId, data.webSearchUsed);
+
+    if (el) {
+      // 如果回答中有 [来源:N] 引用，替换为可点击标记 (由 renderMarkdown 处理)
+      el.innerHTML = `<div class="chat-role">🤖 鲑鱼博士</div>
+        <div class="chat-content markdown-body">${rendered}</div>
+        ${sourcesHtml}`;
+    }
+    chatHistory.push({ role: 'assistant', content: data.answer });
+    if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
+
+    // 滚动到底部（先滚动到 AI 消息顶部让用户看到来源按钮）
+    box.scrollTop = box.scrollHeight;
+  }).catch((err) => {
+    const el = document.getElementById(loadId);
+    if (el) {
+      // 回退
+      fetch('/api/rag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q }),
+      }).then(r => r.json()).then(data => {
+        const sources = (data.sources || []).map((s, i) => ({
+          id: i + 1, title: s.title, relevance: s.relevance || 3,
+          snippet: '', source: '知识库', chapter: s.chapter, link: '',
+        }));
+        el.innerHTML = `<div class="chat-role">🤖 鲑鱼博士 (离线模式)</div>
+          <div class="chat-content markdown-body">${renderMarkdown(data.answer)}</div>
+          ${_buildSourceCards(sources, 'fb_' + Date.now(), false)}`;
+        chatHistory.push({ role: 'assistant', content: data.answer });
+        if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
+        box.scrollTop = box.scrollHeight;
+      }).catch(() => {
+        el.innerHTML = `<div class="chat-role">🤖 鲑鱼博士</div>
+          <div class="chat-content">😅 抱歉，网络连接出现问题。<br><br>
+          💡 请检查服务器是否在运行: <code>npm start</code></div>`;
+      });
+    }
+  });
+}
+
+function quickAsk(q) {
+  document.getElementById('chatInput').value = q;
+  askAI();
+}
+
+function clearChat() {
+  chatHistory = [];
+  document.getElementById('chatBox').innerHTML = `<div class="chat-msg ai">
+    <div class="chat-role">🤖 鲑鱼博士</div>
+    <div class="chat-content">🗑️ 对话已清空！有什么新的问题吗？</div>
+  </div>`;
+  showToast('✅ 对话历史已清空', 'ok');
 }
 
 // ============ 设置 ============
@@ -257,10 +908,14 @@ function importData(input){
 function init(){
   loadRecords();const s=JSON.parse(localStorage.getItem('salmon_settings')||'{}');
   if(s.weight){document.getElementById('avgWeight').value=s.weight;document.getElementById('count').value=s.count||5000;document.getElementById('waterTemp').value=s.temp||14;document.getElementById('doLevel').value=s.do||8.5;}
-  renderHome();setTimeout(function(){validateParams();calcFeeding(true);},300);
+  renderHome();setTimeout(function(){validateParams();if(document.getElementById('feedingResult').innerHTML.indexOf('输入参数')>=0) calcFeeding(true);},300);
   document.getElementById('fishLabel').textContent='三文鱼';
-  setInterval(()=>{try{document.getElementById('clock').textContent=new Date().toLocaleString('zh-CN')}catch(e){}},1000);
+  // Update clock in sidebar
+  const updateClock=()=>{const el=document.getElementById('clock');if(el)el.textContent=new Date().toLocaleString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});};
+  updateClock();setInterval(updateClock,1000);
 }
 
 window.addEventListener('load',init);
 window.addEventListener('resize',()=>{Object.values(charts).forEach(c=>c.resize())});
+// Ctrl+K global search shortcut
+window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();document.getElementById('globalSearch').focus();}});

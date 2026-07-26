@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>🐟 SalmonFeeding AI — 三文鱼养殖投喂管理系统</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked@15.0.0/lib/marked.umd.min.js"></script>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -269,38 +268,20 @@
       <!-- AI CHAT -->
       <div class="page" id="page-chat">
         <div class="card" style="flex:1;display:flex;flex-direction:column">
-          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-            <h3 style="margin-bottom:0">🤖 AI 智能助手 <span style="font-weight:400;font-size:11px;color:var(--text-dim)">— 鲑鱼博士 · 多轮对话 · Claude 驱动</span></h3>
-            <div style="display:flex;gap:8px;align-items:center">
-              <button class="btn-toggle" id="webSearchToggle" onclick="toggleWebSearch()" title="开启后 AI 会搜索网络获取最新信息">
-                🌐 联网搜索 <span id="webSearchBadge" class="toggle-badge off">关</span>
-              </button>
-              <button class="btn-outline btn-sm" onclick="clearChat()" title="清空对话历史">🗑️ 清空对话</button>
-            </div>
-          </div>
+          <h3>🤖 AI 智能助手</h3>
           <div class="quick-asks">
-            <button onclick="quickAsk('水温15度，体重200g的三文鱼，日投喂量多少？')">🌡️ 投喂量计算</button>
-            <button onclick="quickAsk('FCR突然升到2.5，可能是什么原因？怎么排查？')">📊 FCR 异常排查</button>
-            <button onclick="quickAsk('我的鱼最近不吃食，水质正常，可能是什么问题？')">🩺 拒食诊断</button>
-            <button onclick="quickAsk('RAS循环水系统，密度50kg/m³，需要注意什么？')">🐟 密度管理</button>
-            <button onclick="quickAsk('氨氮超标到0.5mg/L了，紧急怎么处理？')">🧪 氨氮应急</button>
-            <button onclick="quickAsk('溶氧降到5mg/L，鱼开始浮头了怎么办？')">🌊 缺氧应急</button>
+            <button onclick="quickAsk('水温15度体重200g')">🌡️ 水温15℃ 200g</button>
+            <button onclick="quickAsk('FCR标准')">📊 FCR 标准</button>
+            <button onclick="quickAsk('密度')">🐟 养殖密度</button>
+            <button onclick="quickAsk('疾病')">🩺 常见疾病</button>
+            <button onclick="quickAsk('pH范围')">🧪 pH 范围</button>
+            <button onclick="quickAsk('溶氧')">🌊 溶氧标准</button>
           </div>
           <div class="chat-box" id="chatBox">
-            <div class="chat-msg ai">
-              <div class="chat-role">🤖 鲑鱼博士</div>
-              <div class="chat-content">👋 你好！我是<b>鲑鱼博士</b>，你的三文鱼养殖智能顾问。<br><br>
-              🎯 我能帮你：<br>
-              • 📐 <b>计算投喂量</b> — 告诉我水温+体重，我帮你算<br>
-              • 🔍 <b>诊断问题</b> — FCR异常/拒食/病害，一步步排查<br>
-              • 🚨 <b>应急处理</b> — 缺氧/氨氮超标/高温，给出紧急方案<br>
-              • 📚 <b>知识解答</b> — 养殖标准/饲料营养/密度管理<br>
-              • 💬 <b>多轮追问</b> — 我会记住前面的对话，可以连续深入讨论<br><br>
-              👇 直接输入问题，或点击下方快捷提问开始吧！</div>
-            </div>
+            <div class="chat-msg ai">👋 你好！我是 SalmonFeeding AI 助手。<br>可以直接输入问题，如 <b>"水温18度体重150g"</b> 快速计算投喂量，或询问养殖知识。</div>
           </div>
           <div class="chat-input">
-            <input id="chatInput" placeholder="输入你的问题，我会记住对话上下文..."
+            <input id="chatInput" placeholder="输入问题，如：水温15度体重200g 的投喂量？"
                    onkeydown="if(event.key==='Enter')askAI()">
             <button class="btn-primary" onclick="askAI()">📤 发送</button>
           </div>

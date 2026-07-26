@@ -113,10 +113,49 @@ const FeedingEngine = {
     steps.push({ step: 4, title: '总量换算', formula: '日投喂量=FI×数量, 投饲率=FI/体重×100', input: `FI=${finalFI.toFixed(4)}kg/尾, 数量=${count}`, result: `日投喂=${daily.toFixed(2)}kg, 投饲率=${feedRate.toFixed(3)}%`, source: '综合计算', detail: '' });
     const meals = waterTemp >= 10 ? 3 : 2;
     const w = [];
-    if (waterTemp<2||waterTemp>22) w.push('🚨 水温超出适宜范围');
-    if (doLevel<4) w.push('🚨 溶氧<4mg/L');
-    if (feedRate>4) w.push('⚠️ 投饲率偏高');
+    if (waterTemp<2||waterTemp>22) w.push('🚨 水温超出适宜范围(2~22℃)');
+    if (doLevel<4) w.push('🚨 溶氧<4mg/L, 鱼类停食风险');
+    if (feedRate>4) w.push('⚠️ 投饲率偏高(>4%), 请核实参数');
     return { method: '科研模型法', dailyFeed: Math.round(daily*1000)/1000, feedPerMeal: Math.round(daily/meals*1000)/1000, feedingRate: Math.round(feedRate*1000)/1000, mealsPerDay: meals, mealTimes: meals===3?['8:00-10:00','12:00-13:00','17:00-18:00']:['8:00-10:00','17:00-18:00'], steps, warnings: w, inputs: { waterTemp, doLevel } };
+  },
+
+  // ====== 方法四: 2025 Azevedo FI = 0.006×BW^0.80×exp(0.287T−0.012T²)×h(DO) ======
+  method2025(avgWeightG, waterTemp, doLevel, count) {
+    const steps = [];
+    const bwG = avgWeightG;
+
+    // Step 1: 基础摄食量 (g/尾/天)
+    const bwFactor = Math.pow(bwG, 0.80);
+    const tempExp = Math.exp(0.287 * waterTemp - 0.012 * waterTemp * waterTemp);
+    const FI_g = 0.006 * bwFactor * tempExp;
+    steps.push({ step: 1, title: '2025 Azevedo FI模型', formula: 'FI=0.006×BW^0.80×exp(0.287T−0.012T²)', input: `BW=${bwG}g, T=${waterTemp}℃`, result: `FI=${FI_g.toFixed(3)}g/尾/天`, source: 'Azevedo et al.,2025 Aquacultural Engineering', detail: '基于64篇研究+25张商业投喂表, MAPE=29.4%, 验证范围6-19℃,0.9-4076g' });
+
+    // Step 2: 溶氧修正
+    const doF = this._sigmoidDO(doLevel, 66, waterTemp);
+    const FI_corrected = FI_g * doF;
+    steps.push({ step: 2, title: '溶氧修正 h(DO)', formula: 'Sigmoid(DO, DOmaxFI=66%)', input: `DO=${doLevel}mg/L`, result: `修正后FI=${FI_g.toFixed(3)}×${doF.toFixed(3)}=${FI_corrected.toFixed(3)}g/尾/天`, source: 'Remen2016', detail: `h(DO)=${doF.toFixed(3)}` });
+
+    // Step 3: 总量换算
+    const dailyKg = FI_corrected * count / 1000;
+    const feedRate = (FI_corrected / bwG) * 100;
+    steps.push({ step: 3, title: '总量换算', formula: '日投喂量(kg)=FI(g)×数量/1000', input: `FI=${FI_corrected.toFixed(3)}g/尾, 数量=${count}`, result: `日投喂=${dailyKg.toFixed(2)}kg, 投饲率=${feedRate.toFixed(3)}%`, source: '', detail: '' });
+
+    // Step 4: 温度最优性评估
+    const optimalT = 12; // 2025 Lai et al.: 12°C最优生长
+    const tDiff = Math.abs(waterTemp - optimalT);
+    let tNote = '';
+    if (tDiff <= 2) tNote = '✅ 水温接近最优(12℃)';
+    else if (tDiff <= 4) tNote = '⚠️ 水温偏离最优3-4℃, 生长效率略降';
+    else tNote = '🔶 水温显著偏离最优, 摄食和生长效率降低';
+    steps.push({ step: 4, title: '温度最优性评估', formula: '最优T=12℃ (Lai et al.2025)', input: `当前T=${waterTemp}℃, 偏离${tDiff}℃`, result: tNote, source: 'Lai et al.,2025 Frontiers in Physiology', detail: '12℃时钟形曲线峰值, 15℃时食欲基因受抑制' });
+
+    const meals = waterTemp >= 10 ? 3 : 2;
+    const w = [];
+    if (waterTemp<2||waterTemp>22) w.push('🚨 水温超出适宜范围(2~22℃)');
+    if (doLevel<4) w.push('🚨 溶氧<4mg/L, 鱼类停食风险');
+    else if (doLevel<7) w.push('⚡ 溶氧偏低(<7mg/L), 摄食已受影响');
+    if (waterTemp>18) w.push('🌡️ 水温>18℃, 高温应激, 建议减少投喂');
+    return { method: '2025最新模型', dailyFeed: Math.round(dailyKg*1000)/1000, feedPerMeal: Math.round(dailyKg/meals*1000)/1000, feedingRate: Math.round(feedRate*1000)/1000, mealsPerDay: meals, mealTimes: meals===3?['8:00-10:00','12:00-13:00','17:00-18:00']:['8:00-10:00','17:00-18:00'], steps, warnings: w, inputs: { waterTemp, doLevel } };
   },
 
   // ====== 方法三: SGR 生长模型 ======
@@ -153,24 +192,43 @@ const FeedingEngine = {
     return this._finalize(finalRate, bwKg, count, waterTemp, doLevel, steps, 'SGR生长模型法');
   },
 
-  // ====== 主入口 ======
+  // ====== 主入口 (四法并行取中位数) ======
   calculate(params) {
     const { avgWeight, count, waterTemp, doLevel } = params;
     const r1 = this.methodTable(avgWeight, waterTemp, doLevel, count);
     const r2 = this.methodScience(avgWeight, waterTemp, doLevel, count);
     const r3 = this.methodGrowth(avgWeight, waterTemp, doLevel, count);
-    const rates = [r1.feedingRate, r2.feedingRate, r3.feedingRate].sort((a,b)=>a-b);
-    const recommended = rates[1];
+    const r2025 = this.method2025(avgWeight, waterTemp, doLevel, count);
+    const allRates = [r1.feedingRate, r2.feedingRate, r3.feedingRate, r2025.feedingRate].sort((a,b)=>a-b);
+    const lower = allRates[1], upper = allRates[2];
+    const recommended = allRates[2]; // 取第3个(偏保守的中间值)
+    // 周预测
+    const totalBiomass = avgWeight * count / 1000;
+    const weeklyFeed = Math.round(r2025.dailyFeed * 7 * 100) / 100;
+    const weeklyGrowth = Math.round(avgWeight * (0.3 + (waterTemp - 2) * 0.09) / 100 * 7);
+    const projectedWeight = avgWeight + weeklyGrowth;
+    const newBiomass = projectedWeight * count / 1000;
+
     return {
-      dailyFeed: r2.dailyFeed, feedPerMeal: r2.feedPerMeal,
-      feedingRate: recommended, mealsPerDay: r2.mealsPerDay, mealTimes: r2.mealTimes,
-      warnings: [...new Set([...r1.warnings,...r2.warnings,...r3.warnings])],
+      dailyFeed: r2025.dailyFeed, feedPerMeal: r2025.feedPerMeal,
+      feedingRate: recommended, feedingRateRange: `${lower.toFixed(2)}-${upper.toFixed(2)}`,
+      mealsPerDay: r2025.mealsPerDay, mealTimes: r2025.mealTimes,
+      warnings: [...new Set([...r1.warnings,...r2.warnings,...r3.warnings,...r2025.warnings])],
       methods: {
         table: { label: '📊 查表插值法', source: '虹鳟投饲率表(教材)', rate: r1.feedingRate, daily: r1.dailyFeed, steps: r1.steps },
         science: { label: '🔬 科研模型法', source: 'Azevedo2026+Remen2016', rate: r2.feedingRate, daily: r2.dailyFeed, steps: r2.steps },
         growth: { label: '📈 SGR生长法', source: 'FAO+孙国祥2014', rate: r3.feedingRate, daily: r3.dailyFeed, steps: r3.steps },
+        azevedo2025: { label: '🆕 2025最新模型', source: 'Azevedo2025(Lai验证)', rate: r2025.feedingRate, daily: r2025.dailyFeed, steps: r2025.steps },
       },
-      recommendedMethod: '中位数综合推荐', inputs: params,
+      recommendedMethod: '四法综合(中位数)', inputs: params,
+      // 周预测
+      weekly: {
+        totalFeed: weeklyFeed,
+        avgGrowth: weeklyGrowth,
+        projectedWeight,
+        currentBiomass: Math.round(totalBiomass * 10) / 10,
+        projectedBiomass: Math.round(newBiomass * 10) / 10,
+      },
     };
   },
 
