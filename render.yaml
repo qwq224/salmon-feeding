@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: salmon-feeding
+    env: node
+    buildCommand: npm install
+    startCommand: node server/server.js
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-5
+      - key: PORT
+        value: "3456"
