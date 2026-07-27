@@ -108,7 +108,8 @@
 - **不要擅自行动**: 用户说"回答就行"时只回答问题，不要执行
 - **每次改动后**: 必须 git commit + push Gitee + push GitHub，并告知用户具体改了什么
 - **🚨 同步规则**: 对项目的任何修改都必须同时推送到 Gitee 和 GitHub 两个远程仓库，不允许只推一个
-- **Render 部署**: 项目已部署到 https://salmon-feeding.onrender.com，变更推送到 GitHub 后 Render 自动重新部署
+- **🚨 网站同步**: 每次改完代码必须 `git push github master`，确保 Render 网站同步更新，不能只停留在本地
+- **Render 部署**: 项目已部署到 https://salmon-feeding.onrender.com（Auto-Deploy 已开启），变更推送到 GitHub 后 Render 自动重新部署
 
 ---
 
