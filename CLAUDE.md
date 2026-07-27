@@ -17,6 +17,9 @@
 
 | 类型 | 文件 | 摘要 |
 |------|------|------|
+| MOD | `render.yaml` | 移除硬编码 PORT 以兼容 Render 自动端口分配 |
+| MOD | `CLAUDE.md` | 新增双仓库同步规则 + Render 部署提醒 |
+| CFG | Render | 项目已部署到 https://salmon-feeding.onrender.com |
 | NEW | `CLAUDE.md` | 项目记忆文件，记录需求、状态、改动日志 |
 | NEW | `README.md` | 完整项目文档 |
 | NEW | `server/embedder.js` | 语义向量服务：主方案 Transformers.js + 备用增强 n-gram |
@@ -103,7 +106,9 @@
 - **改动记录**: 对系统的每一项改动必须记录到 CLAUDE.md「零、改动日志」
 - **CLAUDE.md**: 每次需求变更都要更新此文件
 - **不要擅自行动**: 用户说"回答就行"时只回答问题，不要执行
-- **每次改动后**: 必须 git commit + push Gitee，并告知用户具体改了什么
+- **每次改动后**: 必须 git commit + push Gitee + push GitHub，并告知用户具体改了什么
+- **🚨 同步规则**: 对项目的任何修改都必须同时推送到 Gitee 和 GitHub 两个远程仓库，不允许只推一个
+- **Render 部署**: 项目已部署到 https://salmon-feeding.onrender.com，变更推送到 GitHub 后 Render 自动重新部署
 
 ---
 
@@ -247,4 +252,7 @@ git push origin master    # 推送到 Gitee
 3. **修改完后更新「当前项目状态」** 确保统计数据准确
 4. **用户提出新需求 → 追加到「用户所有需求记录」**
 5. **问题解决/阻塞排除 → 更新「已知问题与解决记录」**
-6. **每天结束 → 生成 diary 日志 + git commit + push Gitee**
+6. **每天结束 → 生成 diary 日志 + git commit + push Gitee + push GitHub**
+7. **🚨 修改代码后，必须推送到两个远程仓库**：`git push origin master` (Gitee) + `git push github master` (GitHub)
+8. **项目已部署到 Render**：`https://salmon-feeding.onrender.com`，GitHub push 会触发自动部署
+9. **GitHub**：`git@github.com:qwq224/salmon-feeding.git` | **Gitee**：`git@gitee.com:ovo231023/salmon-feeding.git`
