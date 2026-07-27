@@ -687,24 +687,29 @@ function renderRecords(){
     return true;
   });
 
-  // 排序
+  // 排序 (数值用数值比较，字符串用字典比较)
   recFiltered.sort((a,b)=>{
-    let va=a[recSortKey]??'', vb=b[recSortKey]??'';
-    if(typeof va==='string') va=va.toLowerCase();
-    if(typeof vb==='string') vb=vb.toLowerCase();
-    return recSortAsc?(va>vb?1:-1):(va<vb?1:-1);
+    let va=a[recSortKey], vb=b[recSortKey];
+    if(typeof va==='number' && typeof vb==='number'){
+      return recSortAsc ? va-vb : vb-va;
+    }
+    if(va==null) va=''; if(vb==null) vb='';
+    va=String(va).toLowerCase(); vb=String(vb).toLowerCase();
+    if(recSortAsc) return va>vb ? 1 : va<vb ? -1 : 0;
+    return vb>va ? 1 : vb<va ? -1 : 0;
   });
 
-  // 统计
-  const tf=recFiltered.reduce((s,r)=>s+r.feed,0);
-  const daysCount=recFiltered.length>0?Math.max(1,Math.ceil((new Date(recFiltered[0].date)-new Date(recFiltered[recFiltered.length-1].date))/86400000)+1):0;
-  const ar=recFiltered.length>0?Math.round(recFiltered.reduce((s,r)=>s+r.rate,0)/recFiltered.length):0;
-  const fw=recFiltered.length>0?recFiltered[recFiltered.length-1].weight:0;
-  const lw=recFiltered.length>0?recFiltered[0].weight:0;
-  const wg=(lw-fw); // 单尾增重(g)
+  // 统计 — 始终基于时间序列 (不受排序影响)
+  const chrono=sorted();
+  const tf=recFiltered.reduce((s,r)=>s+(r.feed||0),0);
+  const ar=recFiltered.length>0?Math.round(recFiltered.reduce((s,r)=>s+(r.rate||0),0)/recFiltered.length):0;
+  const initialW=chrono.length>0?chrono[0].weight:0;
+  const finalW=chrono.length>0?chrono[chrono.length-1].weight:0;
+  const wg=finalW-initialW;
+  const daysCount=chrono.length>1?Math.max(1,Math.ceil((new Date(chrono[chrono.length-1].date)-new Date(chrono[0].date))/86400000)+1):chrono.length;
   const s=JSON.parse(localStorage.getItem('salmon_settings')||'{}');
   const count=s.count||5000;
-  const totalGainKg=wg*count/1000; // 总增重(kg)
+  const totalGainKg=wg*count/1000;
   const fcr=FeedingEngine.calcFCR(tf,totalGainKg);
   document.getElementById('rsFeed').textContent=tf.toFixed(1);
   document.getElementById('rsDaily').textContent=daysCount>0?(tf/daysCount).toFixed(1):'0';
@@ -712,7 +717,6 @@ function renderRecords(){
   document.getElementById('rsFCR').textContent=fcr;
   document.getElementById('rsGrowth').textContent=wg;
   document.getElementById('recCount').textContent=recFiltered.length+'条';
-
   // 表格
   const tbody=document.querySelector('#recordTable tbody');
   const emptyEl=document.getElementById('recEmpty');
