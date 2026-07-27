@@ -47,6 +47,7 @@
 | CFG | `server/embedder.js` | Hugging Face 被墙 → 自动降级备用方案 |
 | CFG | `server/embedder.js` | mock sharp (文本 Embedding 不需要图像处理) |
 | CFG | `server/vector-db.js` | 标记为废弃 (功能迁移到 vector-store.js) |
+| FIX | `js/app.js` | 修复投喂记录排序 bug：统计始终基于时间序列计算，排序改用数值比较 |
 
 ---
 
