@@ -1,6 +1,6 @@
 {
   "name": "salmon-feeding",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "三文鱼养殖投喂管理系统 - AI-Powered Salmon Feeding Management",
   "main": "server/server.js",
   "scripts": {
