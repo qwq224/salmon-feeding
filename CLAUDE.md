@@ -268,12 +268,22 @@ git push origin master    # 推送到 Gitee
 
 ## ⚠️ 给下一个 Claude 会话的提醒
 
+> 🚨 **每次改动后必须做的 5 件事（缺一不可）**：
+> | # | 检查项 | 说明 |
+> |---|--------|------|
+> | 1 | **日记** | 写到 `diary/YYYYMMDD-hhmm-{文件名}.md`，含今日完成/明日计划/遇见的困难 |
+> | 2 | **CLAUDE.md** | 追加到「零、改动日志」，同步更新「当前项目状态」 |
+> | 3 | **README.md** | 部署地址/技术栈/结构有变时必须更新 |
+> | 4 | **Gitee** | `git push origin master`，确保 Gitee 有完整提交记录 |
+> | 5 | **GitHub** | `git push github master`，确保 GitHub 也有记录 + Render 自动部署 |
+
 1. **读取此文件后，先检查「改动日志」** 了解此前做了什么
 2. **任何代码修改后，必须在「改动日志」追加记录** — 格式: `日期 | 类型 | 文件 | 摘要`
 3. **修改完后更新「当前项目状态」** 确保统计数据准确
 4. **用户提出新需求 → 追加到「用户所有需求记录」**
 5. **问题解决/阻塞排除 → 更新「已知问题与解决记录」**
-6. **每天结束 → 生成 diary 日志 + git commit + push Gitee + push GitHub**
+6. **每天结束 → 按上方 5 件事清单执行：日记 + CLAUDE.md + README + push Gitee + push GitHub**
 7. **🚨 修改代码后，必须推送到两个远程仓库**：`git push origin master` (Gitee) + `git push github master` (GitHub)
-8. **项目已部署到 Render**：`https://salmon-feeding.onrender.com`，GitHub push 会触发自动部署
-9. **GitHub**：`git@github.com:qwq224/salmon-feeding.git` | **Gitee**：`git@gitee.com:ovo231023/salmon-feeding.git`
+8. **阿里云 ECS（主生产环境）**：`121.40.98.11:3456` | SSH `ssh root@121.40.98.11` | PM2 `pm2 status/logs`
+9. **Render（备用）**：`https://salmon-feeding.onrender.com`，GitHub push 自动部署
+10. **GitHub**：`git@github.com:qwq224/salmon-feeding.git` | **Gitee**：`git@gitee.com:ovo231023/salmon-feeding.git`
