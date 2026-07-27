@@ -2,7 +2,9 @@
 
 AI 驱动的三文鱼（大西洋鲑/虹鳟）养殖管理平台，集成精准投喂计算、百万字级知识库 RAG 检索、Claude 智能问答、多端接入（Web/企业微信/飞书）。
 
-🌐 **在线体验**: [https://salmon-feeding.onrender.com](https://salmon-feeding.onrender.com)
+🌐 **在线体验**: 
+- 🆕 阿里云 ECS: http://121.40.98.11:3456 （2026-07-28 迁移）
+- Render (备用): https://salmon-feeding.onrender.com
 
 ---
 
