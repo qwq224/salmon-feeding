@@ -27,6 +27,14 @@
 | CFG | SSL | 申请阿里云免费 SSL 证书（DigiCert），文件验证，等待 DNS 全球同步 |
 | CFG | Nginx | 配置 HTTP→HTTPS 重定向 + SSL (等待真证书) |
 | MOD | `CLAUDE.md` | 新增「每次改动后必做5件事」清单 |
+| MOD | SSL | DigiCert 正式证书已安装到 Nginx，HTTPS 生效 |
+| CFG | 飞书 | 回调地址 `http://121.40.98.11:3456/api/webhook/feishu`，.xyz 域名因无ICP被拒 |
+| MOD | `server/server.js` | 新增 GET 飞书处理器 + Anthropic API 代理端点 |
+| MOD | `server/rag.js` | 新增 `ANTHROPIC_BASE_URL` 支持，可配置 API 代理 |
+| NEW | `server/proxy.js` | 独立 Anthropic API 代理（可部署到 Cloudflare/Vercel） |
+| NEW | `diary/20260728-0245-ssl-feishu.md` | SSL + 飞书 + API 代理工作日志 |
+| 🐛 | Claude API | **阿里云 ECS 国内无法访问 api.anthropic.com（被墙），需代理** |
+| 🐛 | Render | 备用服务器持续 502，待排查 |
 
 ### 2026-07-27
 
@@ -208,45 +216,29 @@ salmon-feeding/
 
 ## 五、下次启动时要做的事
 
-### 🚨 优先级 P0 — 立即可做：SSL 证书 & 飞书（当前进度）
+### 🔴 P0 — 继续今天未完成的：Claude API 代理
 
-> **状态**：等待 DNS 全球同步（新域名 qwq231023.xyz，2026-07-28 购买，需 2-24 小时）
-> **阻塞**：DNS 不通 → CA 无法验证域名 → 证书无法签发
+> **状态**: SSL ✅ | 飞书 ✅ | API 代理 ❌（当前卡点）
+> **问题**: 阿里云 ECS 在国内，api.anthropic.com 被墙
 
-**已完成的准备工作**：
-| 项 | 状态 | 详情 |
-|------|------|------|
-| 域名购买 | ✅ | `qwq231023.xyz`，¥14/年，阿里云 |
-| 实名认证 | ✅ | 已通过 |
-| DNS 解析 | ✅ | A @ + A www → 121.40.98.11，权威 DNS (dns17/18.hichina.com) 已有记录 |
-| TXT 记录 | ✅ | `_dnsauth` TXT 验证记录已添加 |
-| SSL 证书申请 | ⏳ | 免费 DigiCert，文件验证方式，验证文件已放服务器 |
-| Nginx HTTPS | ✅ | 配置已完成，自签临时证书占位，等真证书替换 |
-| 验证文件 | ✅ | `/opt/salmon-feeding/.well-known/pki-validation/fileauth.txt` |
+**解决方案（按推荐度排序）**：
+| # | 方案 | 地址 | 说明 |
+|---|------|------|------|
+| A | 公开代理 | `claude-proxy.yinxulai.com` | 免费，CF Workers，直接可用 |
+| B | Nvidia 代理 | `aispeeds.me` | NIM→Anthropic 格式，需注册 Nvidia |
+| C | 修复 Render | `salmon-feeding.onrender.com` | 当前502，需排查 |
 
-**明天第一步**：
-1. **测试 DNS 是否全球生效**：`ssh root@121.40.98.11 "host qwq231023.xyz 8.8.8.8"`
-2. DNS 通了之后 → 证书申请页面点 **「验证」**→ 秒过 → 下载证书
-3. 把证书内容发我 → 我装到 `/etc/nginx/ssl/` → reload nginx
-4. 飞书后台回调地址改成 `https://qwq231023.xyz/api/webhook/feishu`
-5. 测试飞书机器人
+**操作步骤**：
+1. SSH 到 ECS：`ssh root@121.40.98.11`
+2. 测试代理连通性：`curl https://claude-proxy.yinxulai.com`
+3. 改 `.env` 中 `ANTHROPIC_BASE_URL` 为代理地址
+4. `pm2 restart salmon-feeding --update-env`
+5. 在飞书给机器人发消息测试 AI 回复
 
-### 优先级 P1 — 继续推进
-1. **提升文档量到百万字**: 当前 21.4 万，目标 100 万
-   - 方案 A: `node server/generate-docs.js` (Claude API 生成，需修改 TOPICS 数组扩展更多专题)
-   - 方案 B: 写更多 .md 文件到 `data/knowledge/`，运行 `node server/full-build.js`
-   - 方案 C: 放 PDF 论文到 `data/pdfs/`，`POST /api/knowledge/import-pdfs`
-2. **检查网络状态**: 测试 fishfirst.cn、hf-mirror.com 是否从当前网络可达
-   - 如果可达 → 修 crawler.js 加入中文源
-   - 如果 Hugging Face 可达 → Transformers.js 自动启用
-
-### 优先级 P1 — 质量提升
-3. **修复 Semantic Scholar**: `server/crawler.js` 的 `searchSemanticScholar` 函数限流逻辑
-4. **前后端数据打通**: `js/app.js` 的 `loadRecords()` 改为调用 `/api/records`
-
-### 优先级 P2 — 体验优化
-5. **VS 2022 兼容性**: 尝试降级 node-gyp 或使用 `--msvs_version=2022`
-6. **Embedding 模型**: 网络恢复后，模型在 `~/.cache/huggingface/` 下，重启自动加载
+### 🔶 P2 — 其他待办
+- Render 502 排查（可能是新代码部署失败，检查 package.json 依赖兼容性）
+- .xyz 域名 ICP 备案（长期方案，让飞书支持 HTTPS 域名）
+- 知识库扩到 100 万字
 
 ---
 
