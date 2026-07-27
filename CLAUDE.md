@@ -23,6 +23,9 @@
 | MOD | `diary/20260728-0015-阿里云部署.md` | 部署工作日志 |
 | CFG | 阿里云 ECS | 配置 cron 自动部署：每 5 分钟 git pull + pm2 restart |
 | CFG | 阿里云 ECS | 配置 SSH 免密登录 + 一键即时部署 (`ssh root@121.40.98.11 /opt/deploy.sh`) |
+| CFG | 域名 | 购买 `qwq231023.xyz`（¥14），DNS 解析到阿里云 ECS |
+| CFG | SSL | 申请阿里云免费 SSL 证书（DigiCert），文件验证，等待 DNS 全球同步 |
+| CFG | Nginx | 配置 HTTP→HTTPS 重定向 + SSL (等待真证书) |
 | MOD | `CLAUDE.md` | 新增「每次改动后必做5件事」清单 |
 
 ### 2026-07-27
@@ -131,7 +134,8 @@
 - **🚨 网站同步**: 每次改完代码必须 `git push github master`，确保 Render 网站同步更新，不能只停留在本地
 - **Render 部署**: 项目已部署到 https://salmon-feeding.onrender.com（Auto-Deploy 已开启），变更推送到 GitHub 后 Render 自动重新部署
 - **🆕 阿里云 ECS 部署（主生产环境）**: 2026-07-28 迁移到阿里云
-  - 公网 IP: **121.40.98.11** | 端口: **3456**
+  - 公网 IP: **121.40.98.11** | 端口: **3456** | 域名: **qwq231023.xyz** (待 DNS 生效)
+  - HTTPS: Nginx 已配置，SSL 证书申请中（待 DNS 同步后验证签发）
   - 配置: 2核2G, Ubuntu 22.04, 40G ESSD
   - 毕业设计包 ¥339-¥300=¥39，ECS 额度 850 元，约 6 个月
   - SSH: `ssh root@121.40.98.11` | 启动: `pm2 start server/server.js` | 状态: `pm2 status` | 日志: `pm2 logs`
@@ -204,7 +208,30 @@ salmon-feeding/
 
 ## 五、下次启动时要做的事
 
-### 优先级 P0 — 继续推进
+### 🚨 优先级 P0 — 立即可做：SSL 证书 & 飞书（当前进度）
+
+> **状态**：等待 DNS 全球同步（新域名 qwq231023.xyz，2026-07-28 购买，需 2-24 小时）
+> **阻塞**：DNS 不通 → CA 无法验证域名 → 证书无法签发
+
+**已完成的准备工作**：
+| 项 | 状态 | 详情 |
+|------|------|------|
+| 域名购买 | ✅ | `qwq231023.xyz`，¥14/年，阿里云 |
+| 实名认证 | ✅ | 已通过 |
+| DNS 解析 | ✅ | A @ + A www → 121.40.98.11，权威 DNS (dns17/18.hichina.com) 已有记录 |
+| TXT 记录 | ✅ | `_dnsauth` TXT 验证记录已添加 |
+| SSL 证书申请 | ⏳ | 免费 DigiCert，文件验证方式，验证文件已放服务器 |
+| Nginx HTTPS | ✅ | 配置已完成，自签临时证书占位，等真证书替换 |
+| 验证文件 | ✅ | `/opt/salmon-feeding/.well-known/pki-validation/fileauth.txt` |
+
+**明天第一步**：
+1. **测试 DNS 是否全球生效**：`ssh root@121.40.98.11 "host qwq231023.xyz 8.8.8.8"`
+2. DNS 通了之后 → 证书申请页面点 **「验证」**→ 秒过 → 下载证书
+3. 把证书内容发我 → 我装到 `/etc/nginx/ssl/` → reload nginx
+4. 飞书后台回调地址改成 `https://qwq231023.xyz/api/webhook/feishu`
+5. 测试飞书机器人
+
+### 优先级 P1 — 继续推进
 1. **提升文档量到百万字**: 当前 21.4 万，目标 100 万
    - 方案 A: `node server/generate-docs.js` (Claude API 生成，需修改 TOPICS 数组扩展更多专题)
    - 方案 B: 写更多 .md 文件到 `data/knowledge/`，运行 `node server/full-build.js`
