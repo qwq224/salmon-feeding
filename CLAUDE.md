@@ -2,6 +2,51 @@
 
 > 每次启动新会话时，Claude 会自动读取此文件。请保持更新。
 > 最后一次更新: 2026-07-27
+>
+> ⚠️ **重要规则**: 对系统做的每一项改动都必须记录到本文档的「改动日志」中。
+> 新增/修改/删除文件、安装依赖、配置变更 — 全部记录，不允许遗漏。
+
+---
+
+## 零、改动日志 (Changelog)
+
+> 格式: `YYYY-MM-DD | 类型 | 文件 | 摘要`
+> 类型: NEW / MOD / DEL / DEP (依赖) / CFG (配置)
+
+### 2026-07-27
+
+| 类型 | 文件 | 摘要 |
+|------|------|------|
+| NEW | `CLAUDE.md` | 项目记忆文件，记录需求、状态、改动日志 |
+| NEW | `README.md` | 完整项目文档 |
+| NEW | `server/embedder.js` | 语义向量服务：主方案 Transformers.js + 备用增强 n-gram |
+| NEW | `server/vector-store.js` | BM25 + 384维向量 + RRF 混合检索存储 |
+| NEW | `server/doc-pipeline.js` | 文档摄入管道：URL/PDF/文本 + 智能分块 |
+| NEW | `server/crawler.js` | 自动爬虫：NOAA/GSA/Semantic Scholar + 内置文档 |
+| NEW | `server/build-kb.js` | 知识库批量构建脚本 |
+| NEW | `server/full-build.js` | 完整构建：本地文档 + 爬虫 + 论文 |
+| NEW | `server/generate-docs.js` | Claude API 批量生成专业知识文档 |
+| NEW | `data/knowledge/01-water-quality.md` | 水质管理完全手册 |
+| NEW | `data/knowledge/02-feeding-nutrition.md` | 饲料营养与精准投喂 |
+| NEW | `data/knowledge/03-ras-engineering.md` | RAS 循环水系统工程指南 |
+| NEW | `data/knowledge/04-economics-market.md` | 经济分析与市场研究 |
+| NEW | `data/knowledge/05-disease-biosecurity.md` | 疾病防控与生物安全 |
+| NEW | `data/knowledge/06-breeding-smolt.md` | 苗种培育与降海驯化 |
+| NEW | `data/knowledge/07-harvest-sustainability.md` | 收获加工与可持续发展 |
+| NEW | `data/knowledge/08-feeding-strategy-comprehensive.md` | 精准投喂策略综合指南 |
+| NEW | `data/knowledge/09-industry-standards.md` | 行业标准与法规汇编 |
+| NEW | `data/knowledge/10-research-review.md` | 学术论文综述 (8篇文献) |
+| NEW | `diary/` | 工作日志目录 |
+| NEW | `diary/20260727-1430-salmon-feeding.md` | 今日工作日志 |
+| MOD | `server/rag.js` | 替换硬编码 KEYWORD_MAP → vector-store 混合检索；增强来源元数据 |
+| MOD | `server/server.js` | 新增 11 个知识管理 API 端点；启动时自动导入知识库 |
+| MOD | `js/app.js` | 动态文档库 + AI 溯源卡片增强 + 摄入弹窗逻辑 |
+| MOD | `index.html` | 知识库页面改造 + 摄入文档弹窗 HTML |
+| MOD | `.gitignore` | data/*.json + data/chunks/ + data/pdfs/ (保留 knowledge .md) |
+| DEP | `package.json` | 新增 @xenova/transformers ^2.17.0, cheerio ^1.0.0, sharp ^0.32.6 |
+| CFG | `server/embedder.js` | Hugging Face 被墙 → 自动降级备用方案 |
+| CFG | `server/embedder.js` | mock sharp (文本 Embedding 不需要图像处理) |
+| CFG | `server/vector-db.js` | 标记为废弃 (功能迁移到 vector-store.js) |
 
 ---
 
@@ -54,6 +99,7 @@
 - **私人令牌**: 3eaa816bd5feeaad09ed1f99a1664cd7
 - **工作日志**: 每日记录到 `diary/YYYYMMDD-hhmm-{文件名}.md`
 - **日志内容**: 今日完成、明日计划、遇见的困难
+- **改动记录**: 对系统的每一项改动必须记录到 CLAUDE.md「零、改动日志」
 - **CLAUDE.md**: 每次需求变更都要更新此文件
 - **不要擅自行动**: 用户说"回答就行"时只回答问题，不要执行
 
@@ -189,3 +235,14 @@ git push origin master    # 推送到 Gitee
 # 生成工作日志
 # 对 AI 说: "通过 git commit message 生成今天的工作日志"
 ```
+
+---
+
+## ⚠️ 给下一个 Claude 会话的提醒
+
+1. **读取此文件后，先检查「改动日志」** 了解此前做了什么
+2. **任何代码修改后，必须在「改动日志」追加记录** — 格式: `日期 | 类型 | 文件 | 摘要`
+3. **修改完后更新「当前项目状态」** 确保统计数据准确
+4. **用户提出新需求 → 追加到「用户所有需求记录」**
+5. **问题解决/阻塞排除 → 更新「已知问题与解决记录」**
+6. **每天结束 → 生成 diary 日志 + git commit + push Gitee**
