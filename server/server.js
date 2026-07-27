@@ -302,6 +302,16 @@ app.post('/api/webhook/wecom/simple', async (req, res) => {
 });
 
 // ============ 🤖 飞书机器人 ============
+// GET: 飞书控制台预检 + URL验证备用
+app.get('/api/webhook/feishu', (req, res) => {
+  console.log('🐦 飞书 GET:', JSON.stringify(req.query));
+  if (req.query.challenge) {
+    // 某些版本飞书用 GET + query 验证
+    return res.json({ challenge: req.query.challenge });
+  }
+  res.json({ status: 'ok', message: 'SalmonFeeding 飞书机器人就绪' });
+});
+
 app.post('/api/webhook/feishu', async (req, res) => {
   try {
     const config = {
