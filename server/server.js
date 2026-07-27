@@ -349,6 +349,8 @@ function buildFeishuSimpleCard(result, query) {
 
 // ============ 启动 ============
 const PORT = process.env.PORT || 3456;
+const isRender = !!process.env.RENDER;
+
 app.listen(PORT, async () => {
   console.log(`🐟 三文鱼投喂管理系统已启动: http://localhost:${PORT}`);
   console.log(`📡 API: http://localhost:${PORT}/api/records`);
@@ -357,6 +359,7 @@ app.listen(PORT, async () => {
   console.log(`💬 企微 Webhook: http://localhost:${PORT}/api/webhook/wecom`);
   console.log(`🐦 飞书 Webhook: http://localhost:${PORT}/api/webhook/feishu`);
   console.log(`🔧 简易测试: POST /api/webhook/wecom/simple | POST /api/webhook/feishu/simple`);
+  if (isRender) console.log('☁️ 运行在 Render 平台，启用轻量模式');
 
   // 初始化向量库
   try {
@@ -378,16 +381,20 @@ app.listen(PORT, async () => {
     console.error('⚠️ 向量库初始化失败:', e.message);
   }
 
-  // 自动索引 PDF (旧向量库兼容)
-  const status = getStatus();
-  if (status.fileCount > 0) {
-    console.log(`📄 检测到 ${status.fileCount} 个待索引 PDF`);
-    try { await indexAll(); } catch(e) { console.log('⚠️ PDF索引:', e.message); }
-  }
-  if (status.fileCount === 0 && vstore.getStats().documentCount <= 1) {
-    console.log(`💡 将 PDF 文件放入 data/pdfs/ 目录，或通过 API 摄入文档`);
-  }
+  // 自动索引 PDF (仅本地)
+  if (!isRender) {
+    const status = getStatus();
+    if (status.fileCount > 0) {
+      console.log(`📄 检测到 ${status.fileCount} 个待索引 PDF`);
+      try { await indexAll(); } catch(e) { console.log('⚠️ PDF索引:', e.message); }
+    }
+    if (status.fileCount === 0 && vstore.getStats().documentCount <= 1) {
+      console.log(`💡 将 PDF 文件放入 data/pdfs/ 目录，或通过 API 摄入文档`);
+    }
 
-  // 启动新闻自动刷新 (每2小时)
-  startAutoRefresh(120);
+    // 启动新闻自动刷新 (每2小时)
+    startAutoRefresh(120);
+  } else {
+    console.log('☁️ Render: 跳过 PDF 索引和新闻刷新，节省资源');
+  }
 });
