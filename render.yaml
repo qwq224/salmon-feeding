@@ -9,5 +9,3 @@ services:
         sync: false
       - key: ANTHROPIC_MODEL
         value: claude-sonnet-5
-      - key: PORT
-        value: "3456"
