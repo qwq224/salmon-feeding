@@ -11,6 +11,89 @@ const sessionStore = new Map(); // userId -> { history: [], lastActive: timestam
 
 const SESSION_TTL = 30 * 60 * 1000; // 30分钟过期
 
+// ============ 飞书 API 配置 ============
+const FEISHU_APP_ID = process.env.FEISHU_APP_ID || 'cli_aaef79418db8dd06';
+const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '8hcG5GIamrcp1rxPUROzac2B2OdVkGGg';
+let feishuToken = { token: '', expiresAt: 0 };
+
+// 获取飞书 tenant_access_token (自动缓存)
+async function getFeishuToken() {
+  if (feishuToken.token && Date.now() < feishuToken.expiresAt) {
+    return feishuToken.token;
+  }
+  try {
+    const resp = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET }),
+    });
+    const data = await resp.json();
+    if (data.code === 0) {
+      feishuToken = { token: data.tenant_access_token, expiresAt: Date.now() + (data.expire - 300) * 1000 };
+      return feishuToken.token;
+    }
+    console.error('飞书 Token 获取失败:', JSON.stringify(data));
+    return null;
+  } catch(e) {
+    console.error('飞书 Token 请求异常:', e.message);
+    return null;
+  }
+}
+
+// 异步处理飞书消息并回复
+async function processFeishuReply(userId, msgId, text) {
+  const session = getSession('feishu:' + userId);
+  let result;
+  try {
+    result = await chat(text, session.history);
+    session.history.push(
+      { role: 'user', content: text },
+      { role: 'assistant', content: result.answer }
+    );
+    if (session.history.length > 20) session.history = session.history.slice(-20);
+  } catch (e) {
+    result = { answer: '抱歉，处理出错了，请稍后重试。', sources: [] };
+  }
+
+  // 构建回复文本
+  let replyText = result.answer.replace(/\*\*/g, '**').replace(/\n{3,}/g, '\n\n');
+  if (replyText.length > 4000) replyText = replyText.substring(0, 4000) + '\n\n...(内容较长)';
+
+  if (result.sources?.length > 0) {
+    replyText += '\n\n——— 📚 参考 ———\n' + result.sources.slice(0, 4).map(s => '📖 ' + s.title).join('\n');
+  }
+
+  // 通过飞书 API 发送回复
+  const token = await getFeishuToken();
+  if (!token) {
+    console.error('❌ 无法获取飞书 Token，回复失败');
+    return;
+  }
+
+  try {
+    const replyBody = {
+      msg_type: 'text',
+      content: JSON.stringify({ text: replyText }),
+    };
+    const resp = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${msgId}/reply`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify(replyBody),
+    });
+    const data = await resp.json();
+    if (data.code === 0) {
+      console.log(`✅ 飞书回复成功: ${userId}`);
+    } else {
+      console.error(`❌ 飞书回复失败: ${data.code} ${data.msg}`);
+    }
+  } catch(e) {
+    console.error('❌ 飞书 API 调用异常:', e.message);
+  }
+}
+
 function getSession(userId) {
   const now = Date.now();
   // 清理过期会话
@@ -285,9 +368,10 @@ async function handleFeishu(body, headers = {}, config = {}) {
     return { status: 403, body: { msg: 'Token 验证失败' } };
   }
 
-  // 处理消息事件
+  // 处理消息事件 (event_type 在 header 里)
+  const eventType = eventData.header?.event_type || eventData.event?.type || '';
   const event = eventData.event || {};
-  if (event.type === 'im.message.receive_v1') {
+  if (eventType === 'im.message.receive_v1') {
     // 解析消息内容
     let text = '';
     let msgId = '';
@@ -311,45 +395,11 @@ async function handleFeishu(body, headers = {}, config = {}) {
 
     console.log(`💬 飞书消息: ${userId} — "${text.substring(0, 50)}"`);
 
-    // 获取用户会话 → 调用智能对话
-    const session = getSession('feishu:' + userId);
-    let result;
-    try {
-      result = await chat(text, session.history);
-      session.history.push(
-        { role: 'user', content: text },
-        { role: 'assistant', content: result.answer }
-      );
-      if (session.history.length > 20) session.history = session.history.slice(-20);
-    } catch (e) {
-      result = { answer: '抱歉，处理出错了，请稍后重试。', sources: [] };
-    }
+    // 异步处理: 先返回 200 确认，再通过飞书 API 发送回复
+    processFeishuReply(userId, msgId, text);
 
-    // 构建飞书被动回复 (文本格式)
-    let replyText = result.answer
-      .replace(/\*\*/g, '**')   // 保留加粗（飞书支持）
-      .replace(/\n{3,}/g, '\n\n');
-
-    if (replyText.length > 4000) {
-      replyText = replyText.substring(0, 4000) + '\n\n...(内容较长，已截断)';
-    }
-
-    // 添加来源
-    if (result.sources && result.sources.length > 0) {
-      const srcNames = result.sources.slice(0, 4).map(s => '📖 ' + s.title).join('\n');
-      replyText += '\n\n——— 📚 参考来源 ———\n' + srcNames;
-    }
-
-    console.log(`✅ 飞书回复: ${userId} — "${replyText.substring(0, 80)}..."`);
-
-    // 飞书被动回复格式: msg_type + content(JSON字符串)
-    return {
-      status: 200,
-      body: {
-        msg_type: 'text',
-        content: JSON.stringify({ text: replyText }),
-      },
-    };
+    // 立即返回空确认 (飞书要求3秒内响应)
+    return { status: 200, body: {} };
   }
 
   // 其他事件类型直接返回 OK

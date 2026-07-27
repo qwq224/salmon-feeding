@@ -5,6 +5,10 @@ let records=[], charts={}, currentPage='home';
 let chatHistory = []; // 🌟 对话历史记忆
 let webSearchEnabled = false; // 🌐 联网搜索开关
 
+// 🔧 统一排序: 始终返回 旧→新 的副本
+function sorted(){ return [...records].sort((a,b)=>a.date.localeCompare(b.date)); }
+function sortedNewFirst(){ return [...records].sort((a,b)=>b.date.localeCompare(a.date)); }
+
 // ============ 页面切换 ============
 function switchPage(name) {
   currentPage = name;
@@ -14,10 +18,13 @@ function switchPage(name) {
   const pg = document.getElementById('page-'+name);
   if(pg) pg.classList.add('active');
   document.querySelectorAll(`[data-page="${name}"]`).forEach(b=>b.classList.add('active'));
+  // 搜索栏仅首页显示
+  const topBar = document.querySelector('.top-bar');
+  if(topBar) topBar.style.display = (name==='home') ? 'flex' : 'none';
   if(name==='dashboard') renderDashboard();
   if(name==='records') renderRecords();
   if(name==='home') renderHome();
-  if(name==='knowledge') renderKbList();
+  if(name==='knowledge') refreshKnowledge();
   if(name==='calc'){ validateParams(); setTimeout(()=>calcFeeding(), 100); }
   if(name==='settings') loadSettings();
   hideSearchResults();
@@ -25,25 +32,28 @@ function switchPage(name) {
 
 function renderHome() {
   if(records.length===0) loadRecords();
-  const tf=records.reduce((s,r)=>s+(r.feed||0),0);
-  const ar=records.length>0?Math.round(records.reduce((s,r)=>s+(r.rate||0),0)/records.length):0;
-  const fw=records.length>0?records[records.length-1].weight:0;
-  const lw=records.length>0?records[0].weight:0;
-  const wg=lw-fw;
-  const fcr=FeedingEngine.calcFCR(tf,wg/1000);
+  const list=sorted(); // 旧→新，保证计算一致
+  const tf=list.reduce((s,r)=>s+(r.feed||0),0);
+  const ar=list.length>0?Math.round(list.reduce((s,r)=>s+(r.rate||0),0)/list.length):0;
+  const initialW=list.length>0?list[0].weight:0;
+  const finalW=list.length>0?list[list.length-1].weight:0;
+  const wg=finalW-initialW;
+  const s=JSON.parse(localStorage.getItem('salmon_settings')||'{}');
+  const totalGainKg=wg*(s.count||5000)/1000;
+  const fcr=FeedingEngine.calcFCR(tf,totalGainKg);
   document.getElementById('hsTotalFeed').textContent=tf.toFixed(1);
   document.getElementById('hsFCR').textContent=fcr;
   document.getElementById('hsRate').textContent=ar+'%';
   document.getElementById('hsGrowth').textContent=wg+'g';
   document.getElementById('homeRecCount').textContent=records.length+'条记录';
   document.getElementById('recordsBadge').textContent=records.length;
-  // Recent records teaser
+  // Recent records teaser (最新4条)
   const teaser=document.getElementById('recentTeaser');
-  const recent=records.slice(0,4);
+  const recent=sortedNewFirst().slice(0,4);
   if(recent.length===0) {
     teaser.innerHTML='<div style="text-align:center;color:var(--text-dim);padding:20px;grid-column:1/-1">暂无记录，去「投喂计算」页创建第一条吧</div>';
   } else {
-    teaser.innerHTML=recent.map(r=>`<div class="rt-item"><div class="rt-date">${r.date}</div><div class="rt-val">${r.feed}kg</div><div style="font-size:10px;color:var(--text-dim)">食${r.rate||0}% · ${r.weight||0}g · ${r.temp||0}℃</div></div>`).join('');
+    teaser.innerHTML=recent.map(r=>`<div class="rt-item" onclick="highlightAndGo('${r.date}')" title="点击查看详情"><div class="rt-date">${r.date}</div><div class="rt-val">${r.feed}kg</div><div style="font-size:10px;color:var(--text-dim)">食${r.rate||0}% · ${r.weight||0}g · ${r.temp||0}℃</div></div>`).join('');
   }
 }
 
@@ -592,39 +602,160 @@ function saveFeedingPlan(){
 }
 
 // ============ 记录 ============
-function addRecord(){
-  const feed=parseFloat(document.getElementById('recFeed').value);if(!feed||feed<=0)return;
-  records.unshift({
-    date:new Date().toISOString().split('T')[0],
-    feed:Math.round(feed*10)/10,
-    rate:parseInt(document.getElementById('recRate').value)||90,
-    weight:Math.round(parseFloat(document.getElementById('recWeight').value)||150),
-    temp:Math.round((parseFloat(document.getElementById('recTemp').value)||14)*10)/10,
-    doLevel:Math.round((parseFloat(document.getElementById('recDO').value)||8.5)*10)/10,
-  });
-  saveRecords();renderRecords();document.getElementById('recFeed').value='';
-  updateBadges();showToast('✅ 已保存','ok');
+let recSortKey='date', recSortAsc=false, recFiltered=[], recHighlight='';
+
+// 首页跳转 + 高亮
+function highlightAndGo(date){
+  recHighlight=date;
+  switchPage('records');
+  // 清除之前的搜索筛选
+  document.getElementById('recSearch').value='';
+  document.getElementById('recFilterDays').value='0';
+  setTimeout(()=>{ renderRecords(); recHighlight=''; }, 100);
 }
-function delRecord(i){records.splice(i,1);saveRecords();renderRecords();updateBadges();}
+
+function openAddModal(){
+  document.getElementById('recModalTitle').textContent='✚ 添加投喂记录';
+  document.getElementById('recEditIdx').value='-1';
+  document.getElementById('recDate').value=new Date().toISOString().split('T')[0];
+  document.getElementById('recFeed').value='';
+  document.getElementById('recRate').value='90';
+  document.getElementById('recWeight').value='150';
+  document.getElementById('recTemp').value='14';
+  document.getElementById('recDO').value='8.5';
+  document.getElementById('recModal').style.display='flex';
+}
+function openEditModal(i){
+  const r=recFiltered[i]; if(!r)return;
+  document.getElementById('recModalTitle').textContent='✏️ 编辑记录';
+  document.getElementById('recEditIdx').value=records.indexOf(r);
+  document.getElementById('recDate').value=r.date;
+  document.getElementById('recFeed').value=r.feed;
+  document.getElementById('recRate').value=r.rate||90;
+  document.getElementById('recWeight').value=r.weight||150;
+  document.getElementById('recTemp').value=r.temp||14;
+  document.getElementById('recDO').value=r.doLevel||8.5;
+  document.getElementById('recModal').style.display='flex';
+}
+function closeModal(){ document.getElementById('recModal').style.display='none'; }
+
+function saveRecord(){
+  const feed=parseFloat(document.getElementById('recFeed').value);
+  if(!feed||feed<=0){ showToast('请输入投喂量','error'); return; }
+  const entry={
+    date: document.getElementById('recDate').value||new Date().toISOString().split('T')[0],
+    feed: Math.round(feed*10)/10,
+    rate: parseInt(document.getElementById('recRate').value)||90,
+    weight: Math.round(parseFloat(document.getElementById('recWeight').value)||150),
+    temp: Math.round((parseFloat(document.getElementById('recTemp').value)||14)*10)/10,
+    doLevel: Math.round((parseFloat(document.getElementById('recDO').value)||8.5)*10)/10,
+  };
+  const editIdx=parseInt(document.getElementById('recEditIdx').value);
+  if(editIdx>=0){ records[editIdx]=entry; }
+  else { records.unshift(entry); }
+  saveRecords(); renderRecords(); closeModal(); updateBadges();
+  showToast(editIdx>=0?'✅ 已更新':'✅ 已保存','ok');
+}
+
+function delRecord(i){
+  const realIdx=records.indexOf(recFiltered[i]);
+  if(realIdx>=0){ records.splice(realIdx,1); saveRecords(); renderRecords(); updateBadges(); }
+}
+
+function sortRecords(key){
+  if(recSortKey===key) recSortAsc=!recSortAsc; else { recSortKey=key; recSortAsc=false; }
+  renderRecords();
+}
+
 function updateBadges(){
   document.getElementById('recordsBadge').textContent=records.length;
   document.getElementById('homeRecCount').textContent=records.length+'条记录';
 }
+
 function renderRecords(){
-  const list=records.slice(0,50);
+  // 筛选
+  const days=parseInt(document.getElementById('recFilterDays').value)||0;
+  const search=(document.getElementById('recSearch').value||'').toLowerCase();
+  const cutoff=days>0?new Date(Date.now()-days*86400000).toISOString().split('T')[0]:null;
+
+  recFiltered=sortedNewFirst().filter(r=>{
+    if(cutoff && r.date<cutoff) return false;
+    if(search){
+      const str=`${r.date} ${r.feed} ${r.rate} ${r.weight} ${r.temp} ${r.doLevel}`.toLowerCase();
+      if(!str.includes(search)) return false;
+    }
+    return true;
+  });
+
+  // 排序
+  recFiltered.sort((a,b)=>{
+    let va=a[recSortKey]??'', vb=b[recSortKey]??'';
+    if(typeof va==='string') va=va.toLowerCase();
+    if(typeof vb==='string') vb=vb.toLowerCase();
+    return recSortAsc?(va>vb?1:-1):(va<vb?1:-1);
+  });
+
+  // 统计
+  const tf=recFiltered.reduce((s,r)=>s+r.feed,0);
+  const daysCount=recFiltered.length>0?Math.max(1,Math.ceil((new Date(recFiltered[0].date)-new Date(recFiltered[recFiltered.length-1].date))/86400000)+1):0;
+  const ar=recFiltered.length>0?Math.round(recFiltered.reduce((s,r)=>s+r.rate,0)/recFiltered.length):0;
+  const fw=recFiltered.length>0?recFiltered[recFiltered.length-1].weight:0;
+  const lw=recFiltered.length>0?recFiltered[0].weight:0;
+  const wg=(lw-fw); // 单尾增重(g)
+  const s=JSON.parse(localStorage.getItem('salmon_settings')||'{}');
+  const count=s.count||5000;
+  const totalGainKg=wg*count/1000; // 总增重(kg)
+  const fcr=FeedingEngine.calcFCR(tf,totalGainKg);
+  document.getElementById('rsFeed').textContent=tf.toFixed(1);
+  document.getElementById('rsDaily').textContent=daysCount>0?(tf/daysCount).toFixed(1):'0';
+  document.getElementById('rsRate').textContent=ar;
+  document.getElementById('rsFCR').textContent=fcr;
+  document.getElementById('rsGrowth').textContent=wg;
+  document.getElementById('recCount').textContent=recFiltered.length+'条';
+
+  // 表格
   const tbody=document.querySelector('#recordTable tbody');
+  const emptyEl=document.getElementById('recEmpty');
   if(tbody){
-    tbody.innerHTML=list.map((r,i)=>`<tr>
-      <td>${r.date}</td>
-      <td><b>${r.feed} kg</b></td>
-      <td>${r.rate||0}%</td>
-      <td>${r.weight||0} g</td>
-      <td>${(r.temp||0).toFixed(1)} ℃</td>
-      <td>${(r.doLevel||0).toFixed(1)} mg/L</td>
-      <td><button class="btn-danger btn-sm" onclick="delRecord(${i})">删除</button></td>
-    </tr>`).join('')||'<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:30px">📭 暂无记录 — 使用上方快速添加或去投喂计算页</td></tr>';
+    if(recFiltered.length===0){
+      tbody.innerHTML='';
+      if(emptyEl) emptyEl.style.display='block';
+    } else {
+      if(emptyEl) emptyEl.style.display='none';
+      tbody.innerHTML=recFiltered.map((r,i)=>`<tr class="${recHighlight&&r.date===recHighlight?'row-highlight':''}">
+        <td>${r.date}</td>
+        <td><b>${r.feed} kg</b></td>
+        <td>${r.rate||0}%</td>
+        <td>${r.weight||0} g</td>
+        <td>${(r.temp||0).toFixed(1)} ℃</td>
+        <td>${(r.doLevel||0).toFixed(1)} mg/L</td>
+        <td class="rec-actions">
+          <button class="btn-outline btn-xs" onclick="openEditModal(${i})">✏️</button>
+          <button class="btn-danger btn-xs" onclick="delRecord(${i})">🗑</button>
+        </td>
+      </tr>`).join('');
+      // 滚动到高亮行
+      if(recHighlight){
+        setTimeout(()=>{
+          const hl=document.querySelector('.row-highlight');
+          if(hl) hl.scrollIntoView({behavior:'smooth',block:'center'});
+        },200);
+      }
+    }
   }
 }
+
+// CSV 导出
+function exportCSV(){
+  const list=recFiltered.length>0?recFiltered:records;
+  let csv='日期,投喂量(kg),摄食率(%),体重(g),水温(℃),溶氧(mg/L)\n';
+  list.forEach(r=>csv+=`${r.date},${r.feed},${r.rate||0},${r.weight||0},${r.temp||0},${r.doLevel||0}\n`);
+  const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='salmon-feeding-'+new Date().toISOString().split('T')[0]+'.csv';a.click();
+  showToast('✅ CSV已导出','ok');
+}
+
 function saveRecords(){try{localStorage.setItem('salmon_records',JSON.stringify(records));}catch(e){}}
 function loadRecords(){
   const dv=localStorage.getItem('salmon_data_version');
@@ -641,7 +772,7 @@ function _generateDemoRecords(){
   const demoDOs=[8.0,8.2,8.1,8.5,8.3,8.8,8.4,9.0,8.6,9.2,8.7,9.1,8.5,8.3,8.0];
   for(let i=0;i<15;i++){
     const dd=new Date(d);dd.setDate(dd.getDate()-(14-i));
-    records.push({
+    records.unshift({
       date:dd.toISOString().split('T')[0],
       feed:demoFeeds[i],
       rate:demoRates[i],
@@ -653,43 +784,256 @@ function _generateDemoRecords(){
   saveRecords();
 }
 
-// ============ 仪表盘 ============
+// ============ 数据分析面板 ============
 function renderDashboard(){
   if(records.length===0)loadRecords();
-  const tf=records.reduce((s,r)=>s+r.feed,0);const ar=records.length>0?Math.round(records.reduce((s,r)=>s+r.rate,0)/records.length):0;
-  const fw=records.length>0?records[records.length-1].weight:0;const lw=records.length>0?records[0].weight:0;const wg=lw-fw;
-  const fcr=FeedingEngine.calcFCR(tf,wg/1000);const ado=records.length>0?(records.reduce((s,r)=>s+r.doLevel,0)/records.length).toFixed(1):0;
-  document.getElementById('statCards').innerHTML=`<div class="stat-card"><div class="num">${tf.toFixed(1)}</div><div class="label">总投喂kg</div></div><div class="stat-card"><div class="num">${ar}%</div><div class="label">平均摄食率</div></div><div class="stat-card"><div class="num">${fcr}</div><div class="label">FCR</div></div><div class="stat-card"><div class="num">${wg}g</div><div class="label">总增重</div></div>`;
-  const warns=[];if(fcr>2)warns.push('⚠️ FCR偏高');if(parseFloat(ado)<7)warns.push('⚡ 溶氧偏低');if(ar<70)warns.push('📉 摄食率低');
-  document.getElementById('warnings').innerHTML=warns.length>0?warns.map(w=>`<div class="warning">${w}</div>`).join(''):'<div style="color:#27ae60">✅ 正常</div>';
+  const s=JSON.parse(localStorage.getItem('salmon_settings')||'{}');
+  const count=s.count||5000;
+  const list=sorted(); // 旧→新
+  const initialW=list.length>0?list[0].weight:0;
+  const finalW=list.length>0?list[list.length-1].weight:0;
+  const wg=finalW-initialW;
+  const totalGainKg=wg*count/1000;
+  const tf=list.reduce((s,r)=>s+r.feed,0);
+  const ar=list.length>0?Math.round(list.reduce((s,r)=>s+r.rate,0)/list.length):0;
+  const fcr=FeedingEngine.calcFCR(tf,totalGainKg);
+
+  // === 核心指标卡片 ===
+  document.getElementById('dhFCR').textContent=fcr;
+  document.getElementById('dhFCR').style.color=fcr<1.3?'var(--kelp)':fcr<1.8?'var(--accent)':fcr<2.5?'var(--gold)':'var(--coral)';
+  document.getElementById('dhFeed').textContent=tf.toFixed(1);
+  document.getElementById('dhGain').textContent=wg;
+  document.getElementById('dhRate').textContent=ar;
+
+  // === 智能异常检测 ===
+  const warnings=[];
+  // FCR 异常
+  if(fcr>2.5) warnings.push({l:'🔴',c:'coral',t:`FCR ${fcr} — 严重偏高`,d:'饲料转化效率低，建议检查水质、饲料品质、投喂量是否过量'});
+  else if(fcr>1.8) warnings.push({l:'🟡',c:'gold',t:`FCR ${fcr} — 偏高`,d:'建议检查溶氧是否充足、是否有残饵'});
+  // 溶氧检查
+  list.forEach((r,i)=>{
+    if((r.doLevel||0)<6) warnings.push({l:'🔴',c:'coral',t:`${r.date} 溶氧 ${r.doLevel}mg/L`,d:'溶氧低于6mg/L，严重影响摄食和饲料转化'});
+    else if((r.doLevel||0)<7) warnings.push({l:'🟡',c:'gold',t:`${r.date} 溶氧 ${r.doLevel}mg/L`,d:'溶氧偏低，建议增加曝气'});
+  });
+  // 摄食率骤降 (连续2天下降超过10%)
+  for(let i=2;i<list.length;i++){
+    if(list[i].rate<list[i-1].rate-10&&list[i-1].rate<list[i-2].rate-5){
+      warnings.push({l:'🟡',c:'gold',t:`${list[i].date} 摄食率骤降至 ${list[i].rate}%`,d:'连续下降，检查鱼群健康和水质变化'});
+    }
+  }
+  // 体重停滞 (3天增重<5g)
+  for(let i=3;i<list.length;i++){
+    if(list[i].weight-list[i-3].weight<5){
+      warnings.push({l:'🟡',c:'gold',t:`${list[i].date} 生长停滞`,d:'近3天增重不足5g，检查饲料和水温'});
+      break;
+    }
+  }
+  // 去重
+  const seenW=new Set();
+  const uniqueWarns=warnings.filter(w=>{const k=w.t;if(seenW.has(k))return false;seenW.add(k);return true;}).slice(0,8);
+
+  document.getElementById('dhWarn').textContent=uniqueWarns.length;
+  document.getElementById('warnings').innerHTML=uniqueWarns.length>0
+    ?uniqueWarns.map(w=>`<div class="warn-item" style="border-left-color:${w.c}"><b>${w.l} ${w.t}</b><small>${w.d}</small></div>`).join('')
+    :'<div style="color:var(--kelp);padding:20px;text-align:center">✅ 所有指标正常，养殖状态良好</div>';
+
+  // === FCR 趋势表 (从旧到新计算) ===
+  const fcrRows=[];
+  for(let i=1;i<list.length;i++){
+    const dayFeed=list[i].feed;
+    const dayGain=(list[i].weight-list[i-1].weight)*count/1000;
+    const dayFCR=dayGain>0?(dayFeed/dayGain).toFixed(2):'—';
+    const rating=dayFCR==='—'?'—':dayFCR<1.3?'✅':dayFCR<1.8?'🟢':dayFCR<2.5?'🟡':'🔴';
+    fcrRows.push({date:list[i].date,feed:dayFeed,gain:list[i].weight-list[i-1].weight,dayFCR,rating});
+  }
+  document.querySelector('#fcrTable tbody').innerHTML=fcrRows.slice(-10).map(r=>`<tr>
+    <td>${r.date}</td><td><b>${r.feed}kg</b></td><td>${r.gain>0?'+':''}${r.gain}g</td>
+    <td style="font-weight:700">${r.dayFCR}</td><td>${r.rating}</td>
+  </tr>`).join('');
+
+  // === 核心图表: 投喂量(柱) + 体重(线) 双Y轴 ===
   setTimeout(()=>{
-    const dates=records.map(r=>r.date).reverse();
-    if(!charts.feed)charts.feed=echarts.init(document.getElementById('chartFeed'));
-    charts.feed.setOption({tooltip:{trigger:'axis'},xAxis:{type:'category',data:dates},yAxis:{type:'value',name:'kg'},series:[{name:'投喂量',type:'bar',data:records.map(r=>r.feed).reverse(),itemStyle:{color:'#2980b9'}}]});
-    if(!charts.growth)charts.growth=echarts.init(document.getElementById('chartGrowth'));
-    charts.growth.setOption({tooltip:{trigger:'axis'},xAxis:{type:'category',data:dates},yAxis:{type:'value',name:'g'},series:[{name:'体重',type:'line',data:records.map(r=>r.weight).reverse(),smooth:true,itemStyle:{color:'#27ae60'}}]});
+    const dates=list.map(r=>r.date);
+    const feeds=list.map(r=>r.feed);
+    const weights=list.map(r=>r.weight);
+    const dom=document.getElementById('chartMain');
+    if(!dom) return;
+    if(!charts.main) charts.main=echarts.init(dom);
+    charts.main.setOption({
+      tooltip:{trigger:'axis'},
+      legend:{data:['投喂量','体重'],textStyle:{color:'#8899aa'},top:0},
+      grid:{left:50,right:50,top:40,bottom:30},
+      xAxis:{type:'category',data:dates,axisLabel:{color:'#8899aa',fontSize:10}},
+      yAxis:[
+        {type:'value',name:'投喂(kg)',axisLabel:{color:'#8899aa'},splitLine:{lineStyle:{color:'rgba(255,255,255,.05)'}}},
+        {type:'value',name:'体重(g)',axisLabel:{color:'#8899aa'},splitLine:{show:false}},
+      ],
+      series:[
+        {name:'投喂量',type:'bar',data:feeds,itemStyle:{color:'#4a9eff'},barMaxWidth:24},
+        {name:'体重',type:'line',yAxisIndex:1,data:weights,smooth:true,itemStyle:{color:'#27ae60'},lineStyle:{width:2.5},symbol:'circle',symbolSize:6},
+      ],
+    });
+    charts.main.resize();
   },200);
 }
 
-// ============ 知识库 ============
-function renderKbList(){
-  document.getElementById('kbList').innerHTML=KnowledgeBase.getKnowledgeSources().map(k=>{
-    const hasLink = k.link && k.link !== '#';
+// ============ 知识库 (v2 — 动态文档管理) ============
+
+let kbDocuments = [];
+
+async function refreshKnowledge() {
+  try {
+    // 获取统计
+    const statsRes = await fetch('/api/knowledge/stats');
+    const stats = await statsRes.json();
+    document.getElementById('kbStats').textContent =
+      `— ${stats.documentCount} 篇文档 · ${stats.chunkCount} 块 · ${(stats.totalChars/1000).toFixed(0)}K 字`;
+
+    // 获取文档列表
+    const docsRes = await fetch('/api/knowledge/documents');
+    kbDocuments = await docsRes.json();
+    renderKnowledgeList();
+  } catch(e) {
+    document.getElementById('kbStats').textContent = '— 加载失败，请检查服务器';
+    document.getElementById('kbList').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-dim)">⚠️ 无法连接到知识库服务</div>';
+  }
+}
+
+function renderKnowledgeList() {
+  const search = (document.getElementById('kbSearch')?.value || '').toLowerCase();
+  const typeFilter = document.getElementById('kbTypeFilter')?.value || '';
+
+  let docs = kbDocuments;
+  if (search) {
+    docs = docs.filter(d =>
+      (d.title || '').toLowerCase().includes(search) ||
+      (d.sourceName || '').toLowerCase().includes(search) ||
+      (d.author || '').toLowerCase().includes(search) ||
+      (d.tags || []).some(t => t.toLowerCase().includes(search))
+    );
+  }
+  if (typeFilter) {
+    docs = docs.filter(d => d.sourceType === typeFilter);
+  }
+
+  if (docs.length === 0) {
+    document.getElementById('kbList').innerHTML =
+      '<div style="text-align:center;padding:40px;color:var(--text-dim);grid-column:1/-1">📭 没有匹配的文档<br><small>点击「添加文档」导入养殖知识</small></div>';
+    return;
+  }
+
+  const typeIcons = {
+    manual: '📖', paper: '📄', standard: '📏', web_article: '🌐', rss_feed: '📡'
+  };
+
+  document.getElementById('kbList').innerHTML = docs.map(d => {
+    const icon = typeIcons[d.sourceType] || '📎';
+    const tagsHtml = (d.tags || []).map(t => `<span class="kb-tag">${t}</span>`).join('');
+    const hasUrl = d.sourceUrl && d.sourceUrl !== '#';
     return `<div class="kb-item">
       <div class="kb-header">
-        <div class="kb-num">${k.id}</div>
-        <div class="kb-title">${k.title}</div>
-        <span class="kb-tag">${k.type}</span>
+        <div class="kb-num">${icon}</div>
+        <div class="kb-title">${d.title}</div>
+        <span class="kb-tag">${d.sourceType}</span>
       </div>
-      <div class="kb-src">📖 ${k.source}</div>
-      <div class="kb-desc">${k.desc||''}</div>
+      <div class="kb-src">📖 ${d.sourceName || '手动导入'} ${d.author ? '· ' + d.author : ''} ${d.publishDate ? '· ' + d.publishDate : ''}</div>
+      <div class="kb-desc">${d.chunkCount} 个文本块 · ${(d.totalChars/1000).toFixed(1)}K 字符 · 摄入于 ${(d.ingestedAt||'').substring(0,10)}</div>
       <div class="kb-footer">
-        ${hasLink
-          ? `<a href="${k.link}" target="_blank" rel="noopener" class="kb-link" title="在新标签页打开原始来源">🔗 查看原文 →</a>`
-          : `<span class="kb-link-disabled">📎 无在线链接</span>`}
+        <span>${tagsHtml}</span>
+        <span style="display:flex;gap:8px;align-items:center">
+          ${hasUrl ? `<a href="${d.sourceUrl}" target="_blank" rel="noopener" class="kb-link">🔗 查看原文</a>` : ''}
+          <button class="btn-outline btn-xs" onclick="if(confirm('确定删除此文档？'))deleteDocument('${d.id}')" title="删除文档">🗑️</button>
+        </span>
       </div>
     </div>`;
   }).join('');
+}
+
+async function deleteDocument(docId) {
+  try {
+    await fetch('/api/knowledge/documents/' + docId, { method: 'DELETE' });
+    showToast('✅ 文档已删除', 'ok');
+    refreshKnowledge();
+  } catch(e) {
+    showToast('❌ 删除失败', 'error');
+  }
+}
+
+// 摄入文档弹窗
+function showIngestModal() {
+  document.getElementById('ingestModal').style.display = 'flex';
+  document.getElementById('ingestTitle').value = '';
+  document.getElementById('ingestURL').value = '';
+  document.getElementById('ingestText').value = '';
+  document.getElementById('ingestStatus').style.display = 'none';
+}
+
+function closeIngestModal() {
+  document.getElementById('ingestModal').style.display = 'none';
+}
+
+async function ingestDocument() {
+  const url = document.getElementById('ingestURL').value.trim();
+  const text = document.getElementById('ingestText').value.trim();
+  const title = document.getElementById('ingestTitle').value.trim();
+  const author = document.getElementById('ingestAuthor').value.trim();
+  const pubDate = document.getElementById('ingestDate').value;
+  const tagsStr = document.getElementById('ingestTags').value.trim();
+  const sourceType = document.getElementById('ingestType').value;
+
+  if (!url && !text) {
+    showToast('请提供 URL 或文本内容', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('ingestBtn');
+  const statusEl = document.getElementById('ingestStatus');
+  btn.disabled = true;
+  btn.textContent = '⏳ 摄入中...';
+  statusEl.style.display = 'block';
+  statusEl.textContent = '正在抓取/分块/生成向量...';
+  statusEl.style.color = 'var(--gold)';
+
+  try {
+    const body = {
+      options: {
+        title: title || undefined,
+        author: author || undefined,
+        publishDate: pubDate || undefined,
+        sourceType,
+        tags: tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(Boolean) : [],
+      }
+    };
+
+    if (url) {
+      body.url = url;
+    } else {
+      body.text = text;
+    }
+
+    const resp = await fetch('/api/knowledge/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const data = await resp.json();
+    if (data.ok) {
+      statusEl.textContent = `✅ 摄入成功! ${data.document.chunkCount} 个文本块已索引`;
+      statusEl.style.color = 'var(--kelp)';
+      showToast('✅ 文档已添加', 'ok');
+      setTimeout(() => { closeIngestModal(); refreshKnowledge(); }, 1500);
+    } else {
+      throw new Error(data.error || '未知错误');
+    }
+  } catch(e) {
+    statusEl.textContent = '❌ 失败: ' + e.message;
+    statusEl.style.color = 'var(--coral)';
+    showToast('❌ 摄入失败', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📥 摄入文档';
+  }
 }
 
 // ============ 🌟 AI 智能对话 ============
@@ -733,7 +1077,7 @@ function renderMarkdown(text) {
     .replace(/\n/g, '<br>');
 }
 
-// 构建可展开的来源卡片
+// 构建可展开的来源卡片 (增强版)
 function _buildSourceCards(sources, msgId, webSearchUsed) {
   if (!sources || sources.length === 0) return '';
   const webLabel = webSearchUsed ? ' · 🌐 含网络搜索结果' : '';
@@ -745,8 +1089,18 @@ function _buildSourceCards(sources, msgId, webSearchUsed) {
     <div class="source-list" id="sources-${msgId}">`;
   sources.forEach((s, i) => {
     const relStars = '⭐'.repeat(Math.min(5, s.relevance || 1));
-    const typeIcon = (s.source || '').includes('🌐') ? '🌐' : (s.source || '').includes('📄') ? '📄' : '📖';
-    const linkHtml = s.link ? `<a href="${s.link}" target="_blank" rel="noopener" class="src-link">🔗 打开原文</a>` : '';
+    const typeIcons = { paper: '📄', standard: '📏', web_article: '🌐', manual: '📖', rss_feed: '📡', patent: '📜' };
+    const typeIcon = typeIcons[s.docType] || (s.source || '').includes('🌐') ? '🌐' : '📖';
+    const linkHtml = s.link ? `<a href="${s.link}" target="_blank" rel="noopener" class="src-link">🔗 查看原文</a>` : '';
+
+    // 溯源信息行
+    let traceLine = '';
+    if (s.author) traceLine += `👤 ${s.author} · `;
+    if (s.publishDate) traceLine += `📅 ${s.publishDate} · `;
+    if (s.sectionTitle) traceLine += `📖 ${s.sectionTitle} · `;
+    if (s.pageNum) traceLine += `📄 第${s.pageNum}页 · `;
+    if (s.docType) traceLine += `🏷️ ${s.docType}`;
+
     html += `<div class="source-item" id="src-${s.id}">
       <div class="source-item-header">
         <span class="source-num">${typeIcon} [来源:${s.id}]</span>
@@ -754,8 +1108,9 @@ function _buildSourceCards(sources, msgId, webSearchUsed) {
         <span class="source-relevance">${relStars}</span>
         ${linkHtml}
       </div>
+      <div class="source-trace">${traceLine}</div>
       <div class="source-snippet">${s.snippet || '（原文较长，已截取前300字）'}</div>
-      <div class="source-meta">出处: ${s.source || '知识库'} ${s.chapter ? '· 第'+s.chapter+'章' : ''}</div>
+      <div class="source-meta">出处: ${s.source || '知识库'}</div>
     </div>`;
   });
   html += '</div></div>';
@@ -906,6 +1261,7 @@ function importData(input){
 
 // ============ 初始化 ============
 function init(){
+  document.querySelector('.top-bar').style.display='flex'; // 首页显示搜索栏
   loadRecords();const s=JSON.parse(localStorage.getItem('salmon_settings')||'{}');
   if(s.weight){document.getElementById('avgWeight').value=s.weight;document.getElementById('count').value=s.count||5000;document.getElementById('waterTemp').value=s.temp||14;document.getElementById('doLevel').value=s.do||8.5;}
   renderHome();setTimeout(function(){validateParams();if(document.getElementById('feedingResult').innerHTML.indexOf('输入参数')>=0) calcFeeding(true);},300);

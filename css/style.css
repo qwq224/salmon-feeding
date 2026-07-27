@@ -246,7 +246,8 @@ body {
   height: var(--topbar-h);
   min-height: var(--topbar-h);
   padding: 0 24px;
-  display: flex;
+  display: none;
+  /* 默认隐藏，仅首页显示 */
   align-items: center;
   justify-content: center;
   gap: 12px;
@@ -629,6 +630,25 @@ body {
   padding: 14px;
   text-align: center;
   font-size: 12px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.recent-teaser .rt-item:hover {
+  border-color: var(--accent);
+  background: rgba(74,158,255,.08);
+  transform: translateY(-2px);
+}
+
+/* 高亮行 */
+.row-highlight {
+  animation: highlightPulse 2s ease-out;
+  background: rgba(240,192,64,.12) !important;
+}
+
+@keyframes highlightPulse {
+  0% { background: rgba(240,192,64,.3); }
+  100% { background: rgba(240,192,64,.05); }
 }
 
 .recent-teaser .rt-item .rt-date {
@@ -647,24 +667,27 @@ body {
    CALCULATOR PAGE
    ================================================================ */
 .calc-layout {
-  display: grid;
-  grid-template-columns: 1fr 420px;
+  display: flex;
+  flex-direction: column;
   gap: 20px;
   flex: 1;
   min-height: 0;
+  max-width: 860px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 .calc-layout .calc-left,
 .calc-layout .calc-right {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
   min-height: 0;
+  width: 100%;
 }
 
 .calc-layout .calc-right {
-  overflow-y: auto;
-  padding-right: 4px;
+  /* 结果跟随在计算器下方，自然展开 */
 }
 
 .calc-layout .calc-left .card {
@@ -677,15 +700,14 @@ body {
 .param-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  flex: 1;
+  gap: 10px;
 }
 
 .param-card {
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px 14px;
+  border-radius: var(--radius-sm);
+  padding: 14px 12px;
   text-align: center;
   cursor: pointer;
   transition: all var(--transition);
@@ -695,8 +717,8 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-height: 90px;
+  gap: 5px;
+  min-height: 78px;
 }
 
 .param-card:hover {
@@ -706,14 +728,14 @@ body {
 }
 
 .param-card small {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-dim);
   display: block;
-  line-height: 1.3;
+  line-height: 1.2;
 }
 
 .param-card b {
-  font-size: 20px;
+  font-size: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -743,12 +765,12 @@ body {
 .result-box {
   background: linear-gradient(135deg, rgba(26,82,118,.2), rgba(15,40,71,.4));
   border-left: 4px solid var(--accent);
-  padding: 22px 24px;
+  padding: 16px 20px;
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 .result-box .val {
-  font-size: 40px;
+  font-size: 32px;
   font-weight: 800;
   background: linear-gradient(90deg, #fff, #b8d8e8);
   -webkit-background-clip: text;
@@ -917,6 +939,22 @@ body {
   font-size: 11px;
 }
 
+.btn-xs {
+  padding: 3px 7px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: rgba(10,22,40,.4);
+  color: var(--text-dim);
+  transition: all var(--transition);
+}
+
+.btn-xs:hover {
+  background: rgba(74,158,255,.15);
+  border-color: var(--accent);
+}
+
 .btn-outline {
   background: transparent;
   border: 1px solid var(--border);
@@ -1040,12 +1078,60 @@ tr:hover td {
 }
 
 /* ================================================================
-   DASHBOARD PAGE
+   DATA ANALYSIS DASHBOARD
    ================================================================ */
-.charts-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
+
+/* ---- Hero Cards ---- */
+.dash-hero {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.hero-card {
+  flex: 1;
+  min-width: 110px;
+  background: linear-gradient(135deg, rgba(15,40,71,.7), rgba(18,36,58,.5));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  text-align: center;
+  transition: all var(--transition);
+}
+
+.hero-card:hover {
+  border-color: rgba(74,158,255,.3);
+  transform: translateY(-1px);
+}
+
+.hero-card.fcr {
+  border-color: rgba(240,192,64,.25);
+  background: linear-gradient(135deg, rgba(240,192,64,.08), rgba(15,40,71,.5));
+}
+
+.hero-card small {
+  font-size: 11px;
+  color: var(--text-dim);
+  display: block;
+  margin-bottom: 4px;
+}
+
+.hero-card b {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--accent);
+  line-height: 1.2;
+}
+
+.hero-card span {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ---- Main Chart ---- */
+.chart-box-lg {
+  width: 100%;
+  height: 380px;
 }
 
 .chart-box {
@@ -1053,10 +1139,59 @@ tr:hover td {
   height: 340px;
 }
 
+/* ---- Bottom Grid ---- */
+.dash-bottom {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+/* ---- FCR Table ---- */
+.fcr-table {
+  width: 100%;
+  font-size: 12px;
+}
+
+.fcr-table th {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.fcr-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid rgba(255,255,255,.03);
+}
+
+/* ---- Warnings ---- */
 .warnings-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.warn-item {
+  padding: 10px 14px;
+  border-left: 3px solid var(--gold);
+  background: rgba(15,40,71,.4);
+  border-radius: 0 8px 8px 0;
+}
+
+.warn-item b {
+  display: block;
+  font-size: 12px;
+  color: var(--foam);
+  margin-bottom: 2px;
+}
+
+.warn-item small {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.5;
 }
 
 /* ================================================================
@@ -1574,6 +1709,160 @@ tr:hover td {
 }
 
 /* ================================================================
+   RECORDS PAGE (v2)
+   ================================================================ */
+.records-filter {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.records-filter select {
+  padding: 8px 14px;
+  background: rgba(10,22,40,.6);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--foam);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.records-filter input {
+  flex: 1;
+  min-width: 160px;
+  padding: 8px 14px;
+  background: rgba(10,22,40,.6);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--foam);
+  font-family: inherit;
+}
+
+.records-filter input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.filter-tag {
+  font-size: 12px;
+  color: var(--text-dim);
+  background: rgba(255,255,255,.04);
+  padding: 5px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.records-stats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rstat {
+  flex: 1;
+  min-width: 90px;
+  background: rgba(15,40,71,.5);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.rstat small {
+  font-size: 10px;
+  color: var(--text-dim);
+  display: block;
+  margin-bottom: 2px;
+}
+
+.rstat b {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.rstat span {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-left: 2px;
+}
+
+.rec-actions {
+  display: flex;
+  gap: 4px;
+}
+
+#recordTable th {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+#recordTable th:hover {
+  color: var(--accent);
+}
+
+/* ---- Modal ---- */
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.modal-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: 90%;
+  max-width: 520px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-card h4 {
+  font-size: 16px;
+  margin-bottom: 16px;
+  color: var(--foam);
+}
+
+.modal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.modal-grid label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.modal-grid input {
+  width: 100%;
+  padding: 9px 12px;
+  background: rgba(10,22,40,.6);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--foam);
+  font-family: inherit;
+}
+
+.modal-grid input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* ================================================================
    SETTINGS PAGE
    ================================================================ */
 .settings-layout {
@@ -1673,9 +1962,8 @@ input.valid {
 @media (max-width: 1024px) {
   .stat-row { grid-template-columns: repeat(2, 1fr); }
   .quick-grid { grid-template-columns: 1fr 1fr; }
-  .calc-layout { grid-template-columns: 1fr; }
   .param-grid { grid-template-columns: repeat(3, 1fr); }
-  .charts-row { grid-template-columns: 1fr; }
+  .dash-bottom { grid-template-columns: 1fr; }
   .kb-grid { grid-template-columns: 1fr 1fr; }
   .recent-teaser { grid-template-columns: 1fr 1fr; }
 }
@@ -1711,17 +1999,11 @@ input.valid {
     gap: 8px;
   }
 
-  .calc-layout {
-    grid-template-columns: 1fr;
-  }
-
   .param-grid {
     grid-template-columns: 1fr 1fr;
   }
 
-  .charts-row {
-    grid-template-columns: 1fr;
-  }
+  .dash-bottom { grid-template-columns: 1fr; }
 
   .chart-box {
     height: 250px;

@@ -7,9 +7,13 @@ const cors = require('cors');
 const path = require('path');
 const { getRecords, addRecord, deleteRecord, savePlan, getPlans, logQuery, getLogs } = require('./db');
 const { search, generateAnswer, chat } = require('./rag');
+const vstore = require('./vector-store');
+const { embedBatch } = require('./embedder');
+const { ingestURL, ingestPDF, ingestText } = require('./doc-pipeline');
 const { indexAll, getStatus } = require('./vector-db');
 const { startAutoRefresh, getLatestNews, getLatestPrices, getNewsStats, refreshAll } = require('./news-fetcher');
 const { handleWecom, handleFeishu } = require('./webhook-handler');
+const { runAllCrawlers, importNewsArticles, importPDFs, getModelDownloadScript } = require('./crawler');
 
 const app = express();
 app.use(cors());
@@ -112,6 +116,158 @@ app.post('/api/refresh', async (req, res) => {
   res.json({ ok: true, stats: getNewsStats() });
 });
 
+// ============ 📚 知识库管理 API (NEW) ============
+
+// 知识库统计
+app.get('/api/knowledge/stats', (req, res) => {
+  res.json(vstore.getStats());
+});
+
+// 文档列表
+app.get('/api/knowledge/documents', (req, res) => {
+  const { type, q } = req.query;
+  const docs = vstore.listDocuments({ type, q });
+  res.json(docs);
+});
+
+// 文档详情
+app.get('/api/knowledge/documents/:id', (req, res) => {
+  const doc = vstore.getDocument(req.params.id);
+  if (!doc) return res.status(404).json({ error: '文档不存在' });
+  res.json(doc);
+});
+
+// 删除文档
+app.delete('/api/knowledge/documents/:id', (req, res) => {
+  const ok = vstore.removeDocument(req.params.id);
+  if (!ok) return res.status(404).json({ error: '文档不存在' });
+  res.json({ ok: true });
+});
+
+// 高级搜索 (支持过滤)
+app.get('/api/knowledge/search', async (req, res) => {
+  const { q, type, docId, limit } = req.query;
+  if (!q) return res.json({ results: [] });
+  const topK = parseInt(limit) || 10;
+  const filters = {};
+  if (type) filters.sourceType = type;
+  if (docId) filters.docId = docId;
+  const results = await vstore.search(q, topK, filters);
+  res.json({ results, query: q });
+});
+
+// 摄入文档 (URL)
+app.post('/api/knowledge/ingest', async (req, res) => {
+  const { url, text, options } = req.body;
+  try {
+    let result;
+    if (url) {
+      result = await ingestURL(url, options || {});
+    } else if (text) {
+      result = await ingestText(text, options || {});
+    } else {
+      return res.status(400).json({ error: '请提供 url 或 text' });
+    }
+
+    // 生成 embeddings
+    const chunkTexts = result.chunks.map(c => c.text);
+    const embeddings = await embedBatch(chunkTexts);
+
+    // 添加到向量库
+    const docResult = await vstore.addDocument(result.metadata, result.chunks, embeddings);
+
+    res.json({
+      ok: true,
+      document: { id: docResult.docId, title: result.title, chunkCount: docResult.chunkCount },
+    });
+  } catch(e) {
+    console.error('摄入失败:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 上传文件摄入
+app.post('/api/knowledge/upload', async (req, res) => {
+  // 简单 JSON 格式上传 (文件内容在 body 中)
+  const { content, filename, options } = req.body;
+  if (!content) return res.status(400).json({ error: '请提供文件内容' });
+
+  try {
+    const ext = (filename || '').toLowerCase();
+    let result;
+
+    if (ext.endsWith('.md') || ext.endsWith('.txt')) {
+      result = await ingestText(content, { ...options, title: options?.title || filename });
+    } else {
+      result = await ingestText(content, { ...options, title: options?.title || filename });
+    }
+
+    const chunkTexts = result.chunks.map(c => c.text);
+    const embeddings = await embedBatch(chunkTexts);
+
+    const docResult = await vstore.addDocument(result.metadata, result.chunks, embeddings);
+
+    res.json({
+      ok: true,
+      document: { id: docResult.docId, title: result.title, chunkCount: docResult.chunkCount },
+    });
+  } catch(e) {
+    console.error('文件摄入失败:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 重建索引
+app.post('/api/knowledge/reindex', async (req, res) => {
+  try {
+    await vstore.init(true);
+    // 重新导入 KNOWLEDGE_BASE.md
+    const kbPath = path.join(__dirname, '..', 'docs', 'KNOWLEDGE_BASE.md');
+    if (require('fs').existsSync(kbPath)) {
+      await vstore.importMarkdownFile(kbPath);
+    }
+    res.json({ ok: true, stats: vstore.getStats() });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 批量采集文档 (爬虫)
+app.post('/api/knowledge/crawl', async (req, res) => {
+  const options = req.body || {};
+  try {
+    const stats = await runAllCrawlers(options);
+    res.json({ ok: true, stats });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 导入 RSS 新闻
+app.post('/api/knowledge/import-news', async (req, res) => {
+  try {
+    const result = await importNewsArticles();
+    res.json({ ok: true, ...result, stats: vstore.getStats() });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 导入 PDF
+app.post('/api/knowledge/import-pdfs', async (req, res) => {
+  try {
+    const result = await importPDFs();
+    res.json({ ok: true, ...result, stats: vstore.getStats() });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 获取模型下载脚本
+app.get('/api/knowledge/model-download-script', (req, res) => {
+  res.json({ script: getModelDownloadScript() });
+});
+
 // ============ 🤖 企业微信机器人 ============
 // GET: URL 验证 | POST: 接收消息
 app.all('/api/webhook/wecom', async (req, res) => {
@@ -197,17 +353,41 @@ app.listen(PORT, async () => {
   console.log(`🐟 三文鱼投喂管理系统已启动: http://localhost:${PORT}`);
   console.log(`📡 API: http://localhost:${PORT}/api/records`);
   console.log(`🤖 AI 对话: http://localhost:${PORT}/api/chat`);
+  console.log(`📚 知识库: http://localhost:${PORT}/api/knowledge/stats`);
   console.log(`💬 企微 Webhook: http://localhost:${PORT}/api/webhook/wecom`);
   console.log(`🐦 飞书 Webhook: http://localhost:${PORT}/api/webhook/feishu`);
   console.log(`🔧 简易测试: POST /api/webhook/wecom/simple | POST /api/webhook/feishu/simple`);
-  // 自动索引 PDF
-  const status = getStatus();
-  console.log(`📚 向量库: ${status.fileCount} 个PDF, ${status.chunkCount} 个文本块`);
-  if (status.fileCount === 0) {
-    console.log(`💡 将 PDF 文件放入 data/pdfs/ 目录，访问 POST /api/reindex 建立索引`);
+
+  // 初始化向量库
+  try {
+    await vstore.init();
+    const stats = vstore.getStats();
+    console.log(`📚 向量库: ${stats.documentCount} 篇文档, ${stats.chunkCount} 个文本块`);
+
+    // 首次启动自动导入 KNOWLEDGE_BASE.md
+    if (stats.documentCount === 0) {
+      const kbPath = path.join(__dirname, '..', 'docs', 'KNOWLEDGE_BASE.md');
+      if (require('fs').existsSync(kbPath)) {
+        console.log('🆕 首次启动，导入基础知识库...');
+        await vstore.importMarkdownFile(kbPath);
+        const newStats = vstore.getStats();
+        console.log(`✅ 已导入: ${newStats.documentCount} 篇文档, ${newStats.chunkCount} 块`);
+      }
+    }
+  } catch(e) {
+    console.error('⚠️ 向量库初始化失败:', e.message);
   }
-  // 启动时自动索引新增的 PDF
-  try { await indexAll(); } catch(e) { console.log('⚠️ PDF索引:', e.message); }
+
+  // 自动索引 PDF (旧向量库兼容)
+  const status = getStatus();
+  if (status.fileCount > 0) {
+    console.log(`📄 检测到 ${status.fileCount} 个待索引 PDF`);
+    try { await indexAll(); } catch(e) { console.log('⚠️ PDF索引:', e.message); }
+  }
+  if (status.fileCount === 0 && vstore.getStats().documentCount <= 1) {
+    console.log(`💡 将 PDF 文件放入 data/pdfs/ 目录，或通过 API 摄入文档`);
+  }
+
   // 启动新闻自动刷新 (每2小时)
   startAutoRefresh(120);
 });
