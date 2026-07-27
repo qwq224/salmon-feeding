@@ -8,6 +8,9 @@ const fs = require('fs');
 const path = require('path');
 const vstore = require('./vector-store');
 
+// 代理配置: ECS 国内访问不了 Anthropic API，通过 Render 中转
+const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
+
 // ============ 搜索接口 (统一) ============
 
 /**
@@ -53,7 +56,7 @@ function _buildSources(results) {
 
 async function _callClaude(query, context, apiKey) {
   const Anthropic = require('@anthropic-ai/sdk');
-  const anthropic = new Anthropic({ apiKey });
+  const anthropic = new Anthropic({ apiKey, baseURL: ANTHROPIC_BASE_URL });
 
   const systemPrompt = `你是三文鱼(Salmon)养殖投喂管理专家。基于提供的知识库内容回答用户问题。
 
@@ -285,7 +288,7 @@ async function chat(query, history = [], options = {}) {
 
   try {
     const Anthropic = require('@anthropic-ai/sdk');
-    const anthropic = new Anthropic({ apiKey });
+    const anthropic = new Anthropic({ apiKey, baseURL: ANTHROPIC_BASE_URL });
 
     const msg = await anthropic.messages.create({
       model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',

@@ -19,6 +19,36 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ============ Anthropic API 代理 (Render → ECS) ============
+// ECS 在国内访问不了 api.anthropic.com，通过 Render 转发
+const ANTHROPIC_BASE = 'https://api.anthropic.com';
+app.use('/api/anthropic-proxy', async (req, res) => {
+  try {
+    const targetUrl = ANTHROPIC_BASE + req.path;
+    const headers = {
+      'x-api-key': req.headers['x-api-key'] || process.env.ANTHROPIC_API_KEY || '',
+      'anthropic-version': req.headers['anthropic-version'] || '2023-06-01',
+      'Content-Type': 'application/json',
+    };
+
+    const fetchOptions = {
+      method: req.method,
+      headers,
+    };
+    if (req.method !== 'GET' && req.body && Object.keys(req.body).length > 0) {
+      fetchOptions.body = JSON.stringify(req.body);
+    }
+
+    console.log(`🔄 API代理: ${req.method} ${targetUrl}`);
+    const response = await fetch(targetUrl, fetchOptions);
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch(e) {
+    console.error('API代理失败:', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
 // 静态文件
 app.use(express.static(path.join(__dirname, '..')));
 
