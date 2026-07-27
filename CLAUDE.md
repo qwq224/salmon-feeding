@@ -22,6 +22,7 @@
 | MOD | `CLAUDE.md` | 更新部署地址、新增阿里云部署记录 |
 | MOD | `diary/20260728-0015-阿里云部署.md` | 部署工作日志 |
 | CFG | 阿里云 ECS | 配置 cron 自动部署：每 5 分钟 git pull + pm2 restart |
+| CFG | 阿里云 ECS | 配置 SSH 免密登录 + 一键即时部署 (`ssh root@121.40.98.11 /opt/deploy.sh`) |
 | MOD | `CLAUDE.md` | 新增「每次改动后必做5件事」清单 |
 
 ### 2026-07-27
