@@ -358,31 +358,35 @@ app.listen(PORT, async () => {
   console.log(`📚 知识库: http://localhost:${PORT}/api/knowledge/stats`);
   console.log(`💬 企微 Webhook: http://localhost:${PORT}/api/webhook/wecom`);
   console.log(`🐦 飞书 Webhook: http://localhost:${PORT}/api/webhook/feishu`);
-  console.log(`🔧 简易测试: POST /api/webhook/wecom/simple | POST /api/webhook/feishu/simple`);
-  if (isRender) console.log('☁️ 运行在 Render 平台，启用轻量模式');
 
-  // 初始化向量库
-  try {
-    await vstore.init();
-    const stats = vstore.getStats();
-    console.log(`📚 向量库: ${stats.documentCount} 篇文档, ${stats.chunkCount} 个文本块`);
+  if (isRender) {
+    // Render 免费版 512MB 内存，仅服务静态文件和轻量 API
+    console.log('☁️ Render 轻量模式：仅服务 Web + 基础 API');
+  } else {
+    // 本地完整模式
+    console.log(`🔧 简易测试: POST /api/webhook/wecom/simple | POST /api/webhook/feishu/simple`);
 
-    // 首次启动自动导入 KNOWLEDGE_BASE.md
-    if (stats.documentCount === 0) {
-      const kbPath = path.join(__dirname, '..', 'docs', 'KNOWLEDGE_BASE.md');
-      if (require('fs').existsSync(kbPath)) {
-        console.log('🆕 首次启动，导入基础知识库...');
-        await vstore.importMarkdownFile(kbPath);
-        const newStats = vstore.getStats();
-        console.log(`✅ 已导入: ${newStats.documentCount} 篇文档, ${newStats.chunkCount} 块`);
+    // 初始化向量库
+    try {
+      await vstore.init();
+      const stats = vstore.getStats();
+      console.log(`📚 向量库: ${stats.documentCount} 篇文档, ${stats.chunkCount} 个文本块`);
+
+      // 首次启动自动导入 KNOWLEDGE_BASE.md
+      if (stats.documentCount === 0) {
+        const kbPath = path.join(__dirname, '..', 'docs', 'KNOWLEDGE_BASE.md');
+        if (require('fs').existsSync(kbPath)) {
+          console.log('🆕 首次启动，导入基础知识库...');
+          await vstore.importMarkdownFile(kbPath);
+          const newStats = vstore.getStats();
+          console.log(`✅ 已导入: ${newStats.documentCount} 篇文档, ${newStats.chunkCount} 块`);
+        }
       }
+    } catch(e) {
+      console.error('⚠️ 向量库初始化失败:', e.message);
     }
-  } catch(e) {
-    console.error('⚠️ 向量库初始化失败:', e.message);
-  }
 
-  // 自动索引 PDF (仅本地)
-  if (!isRender) {
+    // 自动索引 PDF
     const status = getStatus();
     if (status.fileCount > 0) {
       console.log(`📄 检测到 ${status.fileCount} 个待索引 PDF`);
@@ -392,9 +396,7 @@ app.listen(PORT, async () => {
       console.log(`💡 将 PDF 文件放入 data/pdfs/ 目录，或通过 API 摄入文档`);
     }
 
-    // 启动新闻自动刷新 (每2小时)
+    // 启动新闻自动刷新
     startAutoRefresh(120);
-  } else {
-    console.log('☁️ Render: 跳过 PDF 索引和新闻刷新，节省资源');
   }
 });
