@@ -17,21 +17,13 @@ const SOURCES = {
     name: 'NOAA Fisheries',
     baseURL: 'https://www.fisheries.noaa.gov',
     pages: [
-      {
-        url: 'https://www.fisheries.noaa.gov/topic/aquaculture',
-        title: 'NOAA Aquaculture Overview',
-        tags: ['NOAA', '美国', '渔业政策', '水产养殖'],
-      },
-      {
-        url: 'https://www.fisheries.noaa.gov/national/aquaculture/aquaculture-grants-and-funding',
-        title: 'NOAA Aquaculture Funding Programs',
-        tags: ['NOAA', '资金', '研发'],
-      },
-      {
-        url: 'https://www.fisheries.noaa.gov/national/aquaculture/ aquaculture-policy-and-regulations',
-        title: 'NOAA Aquaculture Policy',
-        tags: ['NOAA', '政策', '法规'],
-      },
+      { url:'https://www.fisheries.noaa.gov/topic/aquaculture', title:'NOAA Aquaculture Overview', tags:['NOAA','美国','渔业政策','水产养殖'] },
+      { url:'https://www.fisheries.noaa.gov/national/aquaculture/aquaculture-grants-and-funding', title:'NOAA Aquaculture Funding', tags:['NOAA','资金','研发'] },
+      { url:'https://www.fisheries.noaa.gov/national/aquaculture/aquaculture-policy-and-regulations', title:'NOAA Aquaculture Policy', tags:['NOAA','政策','法规'] },
+      { url:'https://www.fisheries.noaa.gov/national/aquaculture/FAO-aquaculture-reports', title:'NOAA-USDA Aquaculture Reports', tags:['NOAA','报告','FAO'] },
+      { url:'https://www.fisheries.noaa.gov/feature-story/aquaculture-supports-sustainable-seafood', title:'Aquaculture & Sustainable Seafood', tags:['NOAA','可持续','海产'] },
+      { url:'https://www.fisheries.noaa.gov/national/aquaculture/ aquaculture-economic-impact', title:'Aquaculture Economic Impact', tags:['NOAA','经济','影响'] },
+      { url:'https://www.fisheries.noaa.gov/national/sustainable-seafood/ seafood-import-monitoring-program', title:'Seafood Import Monitoring', tags:['NOAA','进口','监管'] },
     ],
   },
 
@@ -40,21 +32,14 @@ const SOURCES = {
     name: 'Global Seafood Alliance',
     baseURL: 'https://www.globalseafood.org',
     pages: [
-      {
-        url: 'https://www.globalseafood.org/advocate/category/responsible-aquaculture/',
-        title: 'GSA Responsible Aquaculture Articles',
-        tags: ['GSA', '负责任养殖', '认证', 'BAP'],
-      },
-      {
-        url: 'https://www.globalseafood.org/advocate/category/aquafeeds/',
-        title: 'GSA Aquafeeds & Nutrition',
-        tags: ['GSA', '饲料', '营养', '投喂'],
-      },
-      {
-        url: 'https://www.globalseafood.org/advocate/category/animal-welfare/',
-        title: 'GSA Animal Welfare in Aquaculture',
-        tags: ['GSA', '动物福利', '健康'],
-      },
+      { url:'https://www.globalseafood.org/advocate/category/responsible-aquaculture/', title:'GSA Responsible Aquaculture', tags:['GSA','负责任养殖','认证'] },
+      { url:'https://www.globalseafood.org/advocate/category/aquafeeds/', title:'GSA Aquafeeds & Nutrition', tags:['GSA','饲料','营养'] },
+      { url:'https://www.globalseafood.org/advocate/category/animal-welfare/', title:'GSA Animal Welfare', tags:['GSA','动物福利','健康'] },
+      { url:'https://www.globalseafood.org/advocate/category/water-quality/', title:'GSA Water Quality', tags:['GSA','水质','管理'] },
+      { url:'https://www.globalseafood.org/advocate/category/fish-health-disease/', title:'GSA Fish Health & Disease', tags:['GSA','疾病','健康'] },
+      { url:'https://www.globalseafood.org/advocate/category/sustainability/', title:'GSA Sustainability', tags:['GSA','可持续','环境'] },
+      { url:'https://www.globalseafood.org/advocate/category/innovation-technology/', title:'GSA Innovation & Technology', tags:['GSA','创新','技术'] },
+      { url:'https://www.globalseafood.org/advocate/category/finance-investment/', title:'GSA Finance & Investment', tags:['GSA','投资','金融'] },
     ],
   },
 
@@ -63,32 +48,35 @@ const SOURCES = {
     name: 'FAO Fisheries',
     baseURL: 'https://www.fao.org',
     pages: [
-      {
-        url: 'https://www.fao.org/fishery/aquaculture/en',
-        title: 'FAO Aquaculture Portal',
-        tags: ['FAO', '国际组织', '水产养殖'],
-      },
-      {
-        url: 'https://www.fao.org/fishery/en/collection/aquaculture',
-        title: 'FAO Aquaculture Document Collection',
-        tags: ['FAO', '文档', '技术'],
-      },
+      { url:'https://www.fao.org/fishery/aquaculture/en', title:'FAO Aquaculture Portal', tags:['FAO','国际组织','水产养殖'] },
+      { url:'https://www.fao.org/fishery/en/collection/aquaculture', title:'FAO Aquaculture Documents', tags:['FAO','文档','技术'] },
+      { url:'https://www.fao.org/fishery/statistics/global-aquaculture-production/en', title:'FAO Global Aquaculture Statistics', tags:['FAO','统计','全球产量'] },
+      { url:'https://www.fao.org/fishery/en/countryprofiles/search/en', title:'FAO Country Profiles - Fisheries', tags:['FAO','国家','概况'] },
+      { url:'https://www.fao.org/3/cc9461en/cc9461en.pdf', title:'FAO State of World Fisheries 2024', tags:['FAO','世界渔业','报告'] },
     ],
   },
 
-  // Semantic Scholar 学术论文搜索
-  semanticscholar: {
-    name: 'Semantic Scholar',
-    baseURL: 'https://api.semanticscholar.org',
-    queries: [
-      'salmon+feeding+strategy+aquaculture',
-      'salmon+feed+conversion+ratio+FCR',
-      'atlantic+salmon+water+quality+management',
-      'rainbow+trout+feeding+rate+optimization',
-      'aquaculture+RAS+recirculating+system',
-      'salmon+disease+prevention+treatment',
-      'fish+feed+protein+nutrition+salmon',
-      'salmon+growth+model+temperature+dissolved+oxygen',
+  // 水产前沿 fishfirst.cn — 中文水产行业媒体
+  fishfirst: {
+    name: '水产前沿',
+    baseURL: 'http://www.fishfirst.cn',
+    pages: [
+      { url:'http://www.fishfirst.cn/category/jiance', title:'水产前沿 - 监测', tags:['水产前沿','监测','水质'], lang:'zh' },
+      { url:'http://www.fishfirst.cn/category/siyang', title:'水产前沿 - 饲养管理', tags:['水产前沿','饲养','管理'], lang:'zh' },
+      { url:'http://www.fishfirst.cn/category/jibing', title:'水产前沿 - 疾病防治', tags:['水产前沿','疾病','防治'], lang:'zh' },
+      { url:'http://www.fishfirst.cn/category/siliao', title:'水产前沿 - 饲料营养', tags:['水产前沿','饲料','营养'], lang:'zh' },
+      { url:'http://www.fishfirst.cn/category/shuichan', title:'水产前沿 - 水产资讯', tags:['水产前沿','资讯','行业'], lang:'zh' },
+      { url:'http://www.fishfirst.cn/category/yumiao', title:'水产前沿 - 育苗育种', tags:['水产前沿','育苗','育种'], lang:'zh' },
+      { url:'http://www.fishfirst.cn/category/shichang', title:'水产前沿 - 市场行情', tags:['水产前沿','市场','行情'], lang:'zh' },
+    ],
+  },
+
+  // 中国水产频道 — 备用中文源
+  chinafish: {
+    name: '中国水产频道',
+    baseURL: 'http://www.fishfirst.cn',
+    pages: [
+      { url:'http://www.fishfirst.cn/article-1.html', title:'中国水产频道 - 养殖技术', tags:['水产频道','技术','养殖'], lang:'zh' },
     ],
   },
 };
