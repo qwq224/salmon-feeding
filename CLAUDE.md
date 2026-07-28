@@ -118,7 +118,7 @@
 | 1b | 检索水产养殖投喂策略文档/论文/标准，提炼参数 | RAG 到计算引擎的桥梁 |
 | 1c | SQLite/MySQL 数据持久化 | 替换 JSON 文件存储 |
 | 1d | 前后端数据断层修复 | 前端 localStorage → 后端 API |
-| 2 | Transformers.js 真实 Embedding | Hugging Face 被墙，模型无法下载 |
+| 2 | Transformers.js 真实 Embedding | ~~划掉~~ — HF 被墙，n-gram 够用 |
 | 3 | 国内中文水产源接入 | ~~划掉~~ — 英文 RSS 源够用 |
 | 4 | Semantic Scholar 批量论文 | API 429 限流，需要 30s+ 间隔 |
 | 5 | node-gyp / VS 2022 兼容性 | Node 24 的 node-gyp v13 无法检测 VS 2022 |
@@ -249,7 +249,7 @@ salmon-feeding/
 | Hugging Face 被墙 | 未解决 | hf-mirror.com 也超时；jsdelivr 没有模型文件 |
 | sharp 编译失败 | ✅ 已解决 | 移至 optionalDependencies，编译失败不阻塞安装 |
 | node-gyp 无法检测 VS 2022 | ✅ 已解决 | 原生模块移至 optionalDependencies，npm install 不再失败 |
-| Semantic Scholar 429 | 部分解决 | 需 30s+ 间隔；重试逻辑可能无限循环 |
+| Semantic Scholar 429 | ~~划掉~~ — API 限流太严，放弃 |
 
 ---
 
