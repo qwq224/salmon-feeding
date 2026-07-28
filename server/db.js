@@ -1,9 +1,24 @@
 // ================================================================
-// db.js v2 — SQLite 持久化 (Node 24 内置 node:sqlite)
+// db.js v2 — SQLite 持久化
+// 自动选择: node:sqlite (Node≥22.5) → better-sqlite3 → JSON 回退
 // ================================================================
-const { DatabaseSync } = require('node:sqlite');
 const fs = require('fs');
 const path = require('path');
+
+let DatabaseSync;
+let sqliteMode = 'json'; // 'builtin' | 'better-sqlite3' | 'json'
+
+try {
+  ({ DatabaseSync } = require('node:sqlite'));
+  sqliteMode = 'builtin';
+} catch {
+  try {
+    DatabaseSync = require('better-sqlite3');
+    sqliteMode = 'better-sqlite3';
+  } catch {
+    console.log('💡 SQLite 不可用，使用 JSON 文件存储');
+  }
+}
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
