@@ -55,13 +55,12 @@ async function processFeishuReply(userId, msgId, text) {
     result = { answer: '抱歉，处理出错了，请稍后重试。', sources: [] };
   }
 
-  // 构建回复文本
-  let replyText = result.answer.replace(/\*\*/g, '**').replace(/\n{3,}/g, '\n\n');
+  // 构建回复文本 (去掉来源标记和参考列表，IM 场景不需要)
+  let replyText = result.answer
+    .replace(/\*\*/g, '**')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\s*\[来源:\d+\]/g, '');   // 去掉 [来源:N] 标记
   if (replyText.length > 4000) replyText = replyText.substring(0, 4000) + '\n\n...(内容较长)';
-
-  if (result.sources?.length > 0) {
-    replyText += '\n\n——— 📚 参考 ———\n' + result.sources.slice(0, 4).map(s => '📖 ' + s.title).join('\n');
-  }
 
   // 通过飞书 API 发送回复
   const token = await getFeishuToken();
@@ -290,13 +289,13 @@ async function handleWecom(query, body, config = {}) {
     result = { answer: '抱歉，处理出错了，请稍后重试。', sources: [] };
   }
 
-  // 构造回复文本
-  let replyText = truncateForIM(result.answer.replace(/\*\*/g, '').replace(/#{1,4}\s/g, '■ '));
-  // 添加来源
-  if (result.sources && result.sources.length > 0) {
-    const srcNames = result.sources.slice(0, 3).map(s => s.title).join('、');
-    replyText += '\n\n📚 参考: ' + srcNames;
-  }
+  // 构造回复文本 (去掉来源标记和参考列表，IM 场景不需要)
+  let replyText = truncateForIM(
+    result.answer
+      .replace(/\*\*/g, '')
+      .replace(/#{1,4}\s/g, '■ ')
+      .replace(/\s*\[来源:\d+\]/g, '')   // 去掉 [来源:N] 标记
+  );
 
   // 加密回复 (如果需要)
   if (encodingAESKey && fromUser) {
