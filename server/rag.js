@@ -11,6 +11,12 @@ const vstore = require('./vector-store');
 // 代理配置: ECS 国内访问不了 Anthropic API，通过 Render 中转
 const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
 
+// DeepSeek 配置 (国内直连，OpenAI 兼容格式)
+const LLM_PROVIDER = process.env.LLM_PROVIDER || 'deepseek'; // 'anthropic' | 'deepseek'
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
+
 // ============ 搜索接口 (统一) ============
 
 /**
@@ -83,6 +89,42 @@ async function _callClaude(query, context, apiKey) {
   return textBlock.text;
 }
 
+// ============ DeepSeek API 调用 (OpenAI 兼容格式) ============
+
+async function _callDeepSeekChat(messages, systemPrompt, maxTokens, apiKey) {
+  const apiMessages = [];
+  if (systemPrompt) {
+    apiMessages.push({ role: 'system', content: systemPrompt });
+  }
+  for (const m of messages) {
+    apiMessages.push({ role: m.role, content: m.content });
+  }
+
+  const resp = await fetch(`${DEEPSEEK_BASE_URL}/v1/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey || DEEPSEEK_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: DEEPSEEK_MODEL,
+      messages: apiMessages,
+      max_tokens: maxTokens,
+      temperature: 0.7,
+    }),
+    signal: AbortSignal.timeout(120000),
+  });
+
+  if (!resp.ok) {
+    const errBody = await resp.text().catch(() => '');
+    throw new Error(`${resp.status} ${errBody.substring(0, 300)}`);
+  }
+  const data = await resp.json();
+  const content = data.choices?.[0]?.message?.content || '';
+  if (!content) throw new Error('DeepSeek 返回空内容');
+  return content;
+}
+
 // ============ RAG 回答 ============
 
 /**
@@ -101,9 +143,25 @@ async function generateAnswer(query) {
   }
 
   const context = _buildContext(results);
-  const apiKey = process.env.ANTHROPIC_API_KEY;
 
-  if (apiKey) {
+  // DeepSeek 优先 (国内可直连)
+  if (LLM_PROVIDER === 'deepseek' && DEEPSEEK_API_KEY) {
+    try {
+      const answer = await _callDeepSeekChat(
+        [{ role: 'user', content: `知识库检索结果:\n\n${context}\n\n---\n用户问题: ${query}\n\n请基于以上知识库内容回答用户问题。` }],
+        '你是三文鱼(Salmon)养殖投喂管理专家。基于提供的知识库内容回答用户问题。规则: 1. 只使用提供的知识库内容回答, 不要编造 2. 如果知识库中有具体数值(水温/溶氧/投饲率等), 务必引用 3. 如有标准/论文来源, 注明出处 4. 回答简洁专业, 分点列出关键信息 5. 如果知识库中信息不足, 诚实说明并给出建议方向 6. 用中文回答, 专业术语保留英文缩写',
+        1500,
+        DEEPSEEK_API_KEY
+      );
+      return { answer, sources };
+    } catch (e) {
+      console.error('DeepSeek API 调用失败, 回退到本地回答:', e.message);
+    }
+  }
+
+  // Anthropic (备用)
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (LLM_PROVIDER === 'anthropic' && apiKey) {
     try {
       const answer = await _callClaude(query, context, apiKey);
       return { answer, sources };
@@ -266,7 +324,7 @@ async function chat(query, history = [], options = {}) {
     : '';
 
   // 6. 无 API Key 时回退
-  if (!apiKey) {
+  if (LLM_PROVIDER === 'deepseek' && !DEEPSEEK_API_KEY) {
     const result = await generateAnswer(query);
     return result;
   }
@@ -286,25 +344,42 @@ async function chat(query, history = [], options = {}) {
     content: `【参考资料 — 请在回答中用 [来源:N] 标注引用】\n${context || '（暂无匹配的知识库内容，请基于养殖学常识回答）'}\n${searchModeNote}\n---\n【养殖户的问题】\n${query}`,
   });
 
-  try {
-    const Anthropic = require('@anthropic-ai/sdk');
-    const anthropic = new Anthropic({ apiKey, baseURL: ANTHROPIC_BASE_URL });
-
-    const msg = await anthropic.messages.create({
-      model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',
-      max_tokens: 2500,
-      system: CHAT_SYSTEM_PROMPT,
-      messages,
-    });
-
-    const textBlock = [...msg.content].reverse().find(b => b.type === 'text');
-    if (!textBlock || !textBlock.text) throw new Error('API返回格式异常');
-
-    return { answer: textBlock.text, sources, webSearchUsed: enableWebSearch };
-  } catch (e) {
-    console.error('Claude Chat API 调用失败:', e.message);
-    return await generateAnswer(query);
+  // DeepSeek (国内直连)
+  if (LLM_PROVIDER === 'deepseek' && DEEPSEEK_API_KEY) {
+    try {
+      const answer = await _callDeepSeekChat(messages, CHAT_SYSTEM_PROMPT, 2500, DEEPSEEK_API_KEY);
+      return { answer, sources, webSearchUsed: enableWebSearch };
+    } catch (e) {
+      console.error('DeepSeek Chat API 调用失败:', e.message);
+      return await generateAnswer(query);
+    }
   }
+
+  // Anthropic (备用)
+  if (LLM_PROVIDER === 'anthropic') {
+    try {
+      const Anthropic = require('@anthropic-ai/sdk');
+      const anthropic = new Anthropic({ apiKey, baseURL: ANTHROPIC_BASE_URL });
+
+      const msg = await anthropic.messages.create({
+        model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',
+        max_tokens: 2500,
+        system: CHAT_SYSTEM_PROMPT,
+        messages,
+      });
+
+      const textBlock = [...msg.content].reverse().find(b => b.type === 'text');
+      if (!textBlock || !textBlock.text) throw new Error('API返回格式异常');
+
+      return { answer: textBlock.text, sources, webSearchUsed: enableWebSearch };
+    } catch (e) {
+      console.error('Claude Chat API 调用失败:', e.message);
+      return await generateAnswer(query);
+    }
+  }
+
+  // Fallback
+  return await generateAnswer(query);
 }
 
 // ============ 本地回退回答 ============

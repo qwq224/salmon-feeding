@@ -1,0 +1,7 @@
+# Cloudflare Worker: Anthropic API Proxy for SalmonFeeding
+name = "salmon-feeding-proxy"
+main = "server/cf-proxy.js"
+compatibility_date = "2025-07-28"
+
+# 免费计划: 每天 10 万次请求，足够用
+# 部署后访问: https://salmon-feeding-proxy.<你的用户名>.workers.dev
