@@ -60,7 +60,7 @@ app.get('/api/records', (req, res) => {
 app.post('/api/records', (req, res) => {
   const r = req.body;
   const result = addRecord(r);
-  res.json({ id: result.lastInsertRowid, ...r });
+  res.json(result);  // result 已经包含 id + 所有字段
 });
 
 app.delete('/api/records/:id', (req, res) => {

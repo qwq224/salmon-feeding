@@ -639,7 +639,7 @@ function openEditModal(i){
 }
 function closeModal(){ document.getElementById('recModal').style.display='none'; }
 
-function saveRecord(){
+async function saveRecord(){
   const feed=parseFloat(document.getElementById('recFeed').value);
   if(!feed||feed<=0){ showToast('请输入投喂量','error'); return; }
   const entry={
@@ -651,15 +651,43 @@ function saveRecord(){
     doLevel: Math.round((parseFloat(document.getElementById('recDO').value)||8.5)*10)/10,
   };
   const editIdx=parseInt(document.getElementById('recEditIdx').value);
-  if(editIdx>=0){ records[editIdx]=entry; }
-  else { records.unshift(entry); }
-  saveRecords(); renderRecords(); closeModal(); updateBadges();
+
+  // 通过 API 保存
+  try {
+    const resp=await fetch('/api/records',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(toAPI(entry))
+    });
+    if(!resp.ok) throw new Error('API '+resp.status);
+    const saved=fromAPI(await resp.json());
+    if(editIdx>=0){ records[editIdx]=saved; }
+    else { records.unshift(saved); }
+  }catch(e){
+    console.warn('API 保存失败，使用本地存储:',e.message);
+    if(editIdx>=0){ records[editIdx]=entry; }
+    else { records.unshift(entry); }
+  }
+
+  saveRecordsLocal(); renderRecords(); closeModal(); updateBadges();
   showToast(editIdx>=0?'✅ 已更新':'✅ 已保存','ok');
 }
 
-function delRecord(i){
+async function delRecord(i){
   const realIdx=records.indexOf(recFiltered[i]);
-  if(realIdx>=0){ records.splice(realIdx,1); saveRecords(); renderRecords(); updateBadges(); }
+  if(realIdx<0) return;
+  const rec=records[realIdx];
+
+  // 通过 API 删除
+  if(rec.id){
+    try {
+      const resp=await fetch('/api/records/'+rec.id,{method:'DELETE'});
+      if(!resp.ok) throw new Error('API '+resp.status);
+    }catch(e){ console.warn('API 删除失败:',e.message); }
+  }
+
+  records.splice(realIdx,1);
+  saveRecordsLocal(); renderRecords(); updateBadges();
 }
 
 function sortRecords(key){
@@ -760,12 +788,69 @@ function exportCSV(){
   showToast('✅ CSV已导出','ok');
 }
 
-function saveRecords(){try{localStorage.setItem('salmon_records',JSON.stringify(records));}catch(e){}}
-function loadRecords(){
+// ============ API 字段名转换 ============
+// 前端 (短驼峰) ↔ 后端 (snake_case)
+function toAPI(r){
+  return {
+    id: r.id,
+    date: r.date,
+    feed_kg: r.feed,
+    feeding_rate: r.rate,
+    fish_weight_g: r.weight,
+    water_temp: r.temp,
+    do_level: r.doLevel,
+    note: r.note||'',
+  };
+}
+function fromAPI(r){
+  return {
+    id: r.id,
+    date: r.date,
+    feed: r.feed_kg,
+    rate: r.feeding_rate,
+    weight: r.fish_weight_g,
+    temp: r.water_temp,
+    doLevel: r.do_level,
+    note: r.note||'',
+  };
+}
+
+// 本地 localStorage 缓存 (API 不可用时回退)
+function saveRecordsLocal(){try{localStorage.setItem('salmon_records',JSON.stringify(records));}catch(e){}}
+
+async function loadRecords(){
   const dv=localStorage.getItem('salmon_data_version');
   if(dv!=='2'){localStorage.removeItem('salmon_records');localStorage.setItem('salmon_data_version','2');}
+
+  // 1. 先从 API 加载
+  try {
+    const resp=await fetch('/api/records');
+    if(!resp.ok) throw new Error('API '+resp.status);
+    const data=await resp.json();
+    records=data.map(fromAPI);
+    // 2. 迁移 localStorage 旧数据到 API (如果有的话)
+    try {
+      const old=JSON.parse(localStorage.getItem('salmon_records')||'[]');
+      const existingDates=new Set(records.map(r=>r.date+r.feed+r.weight));
+      for(const r of old){
+        const key=r.date+r.feed+r.weight;
+        if(!existingDates.has(key)){
+          await fetch('/api/records',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(toAPI(r))});
+        }
+      }
+      localStorage.removeItem('salmon_records'); // 迁移完成，清旧缓存
+    }catch(e){}
+    if(records.length===0){_generateDemoRecords();}
+    saveRecordsLocal();
+    return;
+  }catch(e){
+    console.warn('API 不可用，使用本地缓存:',e.message);
+    showToast('⚠️ 离线模式 — 数据未同步','warn');
+  }
+
+  // 3. API 失败 → 回退 localStorage
   try{records=JSON.parse(localStorage.getItem('salmon_records')||'[]');}catch(e){records=[]};
-  if(records.length===0){_generateDemoRecords();saveRecords();}
+  if(records.length===0){_generateDemoRecords();saveRecordsLocal();}
 }
 function _generateDemoRecords(){
   records=[];const d=new Date();
@@ -785,7 +870,7 @@ function _generateDemoRecords(){
       doLevel:demoDOs[i]
     });
   }
-  saveRecords();
+  saveRecordsLocal();
 }
 
 // ============ 数据分析面板 ============
@@ -1259,14 +1344,14 @@ function exportData(){
 function importData(input){
   const file=input.files[0];if(!file)return;
   const reader=new FileReader();reader.onload=function(e){
-    try{const data=JSON.parse(e.target.result);if(data.records){records=data.records;saveRecords();renderRecords();showToast('✅ 已导入'+data.records.length+'条记录','ok');}}catch(err){showToast('❌ 文件格式错误','error');}
+    try{const data=JSON.parse(e.target.result);if(data.records){records=data.records;saveRecordsLocal();renderRecords();showToast('✅ 已导入'+data.records.length+'条记录','ok');}}catch(err){showToast('❌ 文件格式错误','error');}
   };reader.readAsText(file);
 }
 
 // ============ 初始化 ============
-function init(){
+async function init(){
   document.querySelector('.top-bar').style.display='flex'; // 首页显示搜索栏
-  loadRecords();const s=JSON.parse(localStorage.getItem('salmon_settings')||'{}');
+  await loadRecords();const s=JSON.parse(localStorage.getItem('salmon_settings')||'{}');
   if(s.weight){document.getElementById('avgWeight').value=s.weight;document.getElementById('count').value=s.count||5000;document.getElementById('waterTemp').value=s.temp||14;document.getElementById('doLevel').value=s.do||8.5;}
   renderHome();setTimeout(function(){validateParams();if(document.getElementById('feedingResult').innerHTML.indexOf('输入参数')>=0) calcFeeding(true);},300);
   document.getElementById('fishLabel').textContent='三文鱼';
