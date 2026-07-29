@@ -181,14 +181,22 @@ function _extractKeywords(query) {
 }
 
 function _bestMatchingSentence(text, keywords) {
-  const sentences = text.split(/[。.；;！!？?\n]/).map(s => s.trim()).filter(s => s.length > 10 && s.length < 200);
+  const sentences = text.split(/[。.；;！!？?\n]/).map(s => s.trim()).filter(s => {
+    if (s.length < 10 || s.length > 200) return false;
+    if (/^\d+[a-z]?\s*[|]/.test(s)) return false;       // "2g | — | 5000" 表格碎片
+    if (/^[-\s—]*$/.test(s)) return false;               // 纯分隔线
+    if (/^[a-z]{1,3}\s*\|/i.test(s)) return false;       // "mg | L |" 单位碎片
+    return true;
+  });
   if (sentences.length === 0) return null;
 
   let best = null, bestHits = 0;
   for (const s of sentences) {
     if (/^\s*[#|\-*>]/.test(s)) continue;
+    if (/\|/.test(s)) continue;                         // 含管道符=表格碎片
     if (/^Q\d+[:：]/.test(s)) continue;
     if (/第[一二三四五六七八九十]章/.test(s)) continue;
+    if (/^[①②③④⑤⑥⑦⑧⑨⑩]/.test(s)) continue;
 
     const hits = keywords.filter(kw => s.includes(kw)).length;
     if (hits > bestHits) {
