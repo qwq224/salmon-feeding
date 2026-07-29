@@ -52,28 +52,30 @@ function isInDomain(query) {
 
 /**
  * 从知识库检索结果构建简洁回答
- * 只提炼关键信息，不堆砌原文
+ * 核心思路：解析用户问题中的参数 → 在检索结果中找匹配的答案 → 简洁输出
  */
 function _buildKBAnswer(query, results, sources) {
   if (!results || results.length === 0) {
     return _outOfScopeAnswer('no_match');
   }
 
+  // 解析用户问题中的关键参数
+  const qParams = _parseQueryParams(query);
+
   const allText = results.map(r => r.text || '').join('\n');
   let answer = '';
 
-  // 1. 提取关键数值参数
-  const params = _extractKeyParams(allText);
-  if (params.length > 0) {
-    answer += params.slice(0, 5).map(p => `- ${p}`).join('\n');
-    answer += '\n';
+  // 1. 找与用户参数直接相关的信息
+  const relevantLines = _findRelevantInfo(results, qParams);
+  if (relevantLines.length > 0) {
+    answer += relevantLines.join('\n');
+    return answer;
   }
 
-  // 2. 智能提炼：从每个结果取一句最像"信息陈述"的话（过滤掉表格/列表行）
+  // 2. 无精确匹配时，取最相关的几个信息点
   const points = [];
   const seen = new Set();
-
-  for (let i = 0; i < Math.min(results.length, 5); i++) {
+  for (let i = 0; i < Math.min(results.length, 4); i++) {
     const r = results[i];
     const cleaned = _extractInfoSentence(r.text);
     if (cleaned && cleaned.length > 5 && !seen.has(cleaned.substring(0, 40))) {
@@ -83,12 +85,159 @@ function _buildKBAnswer(query, results, sources) {
   }
 
   if (points.length > 0) {
-    for (let i = 0; i < points.length; i++) {
-      answer += `${i + 1}. ${points[i]}\n`;
-    }
+    answer = points.map((p, i) => `${i + 1}. ${p}`).join('\n');
   }
 
   return answer;
+}
+
+/**
+ * 从用户问题中解析关键参数
+ */
+function _parseQueryParams(query) {
+  const params = {};
+  // 水温
+  const tMatch = query.match(/(\d+\.?\d*)\s*[℃C°度]/);
+  if (tMatch) params.temp = parseFloat(tMatch[1]);
+  // 体重
+  const wMatch = query.match(/(\d+\.?\d*)\s*(?:g|克|kg|公斤|千克)/i);
+  if (wMatch) {
+    const w = parseFloat(wMatch[1]);
+    params.weight = wMatch[0].toLowerCase().includes('kg') || wMatch[0].includes('公斤') || wMatch[0].includes('千克')
+      ? w * 1000 : w; // 统一为克
+  }
+  // 溶氧
+  const doMatch = query.match(/(\d+\.?\d*)\s*(?:mg\/L|毫克)/i);
+  if (doMatch) params.do = parseFloat(doMatch[1]);
+  return params;
+}
+
+/**
+ * 在检索结果中查找与用户参数直接相关的信息
+ */
+function _findRelevantInfo(results, qParams) {
+  const lines = [];
+  let srcIdx = 0;
+
+  for (const r of results) {
+    srcIdx++;
+    const text = r.text || '';
+
+    // 如果用户问了水温+体重 → 在文本中找匹配的行
+    if (qParams.temp && qParams.weight) {
+      // 在投饲率矩阵中找接近的水温和体重
+      const relevant = _extractFeedingRateLine(text, qParams.temp, qParams.weight);
+      if (relevant) {
+        lines.push(relevant + ` [来源:${srcIdx}]`);
+        continue;
+      }
+      // 退一步：找包含该水温的投饲率信息
+      const tempLine = _findTempMatch(text, qParams.temp);
+      if (tempLine) {
+        lines.push(tempLine + ` [来源:${srcIdx}]`);
+        continue;
+      }
+    }
+
+    // 如果只问了水温
+    if (qParams.temp && !qParams.weight) {
+      const tempLine = _findTempMatch(text, qParams.temp);
+      if (tempLine) {
+        lines.push(tempLine + ` [来源:${srcIdx}]`);
+        continue;
+      }
+    }
+
+    // 如果问了溶氧
+    if (qParams.do) {
+      const doLine = _findDoMatch(text, qParams.do);
+      if (doLine) {
+        lines.push(doLine + ` [来源:${srcIdx}]`);
+        continue;
+      }
+    }
+  }
+
+  return lines.slice(0, 5);
+}
+
+/**
+ * 在投饲率矩阵表格中找接近水温+体重的行，返回可读的投饲率建议
+ */
+function _extractFeedingRateLine(text, temp, weight) {
+  // 找文本中的投饲率表格数据
+  const lines = text.split('\n');
+  const feedingData = [];
+
+  for (const line of lines) {
+    // 匹配表格行: | 15℃ | 3.0 | 5.8 | ... (水温行)
+    const tempRow = line.match(/^\|\s*(\d{1,2})\s*[℃C°]?\s*\|/);
+    if (tempRow) {
+      const cells = line.split('|').map(c => c.trim()).filter(c => c && !c.match(/^[-:]+$/));
+      if (cells.length >= 3) {
+        feedingData.push({ temp: parseFloat(cells[0]), values: cells.slice(1).map(v => parseFloat(v)) });
+      }
+    }
+  }
+
+  if (feedingData.length === 0) return null;
+
+  // 找最接近的水温行
+  const closest = feedingData.reduce((best, row) =>
+    Math.abs(row.temp - temp) < Math.abs(best.temp - temp) ? row : best
+  );
+
+  if (Math.abs(closest.temp - temp) > 5) return null; // 差异太大不显示
+
+  // 尝试根据体重找到对应的投饲率列
+  // 体重级参考: <0.18, 0.18-1.5, 1.5-5.1, 5.1-12, 12-23, 23-39, 39-62, 62-92, 92-130, 130-180, >180 (单位g)
+  let weightIdx = -1;
+  if (weight >= 130) weightIdx = 9;
+  else if (weight >= 92) weightIdx = 8;
+  else if (weight >= 62) weightIdx = 7;
+  else if (weight >= 39) weightIdx = 6;
+  else if (weight >= 23) weightIdx = 5;
+  else if (weight >= 12) weightIdx = 4;
+  else if (weight >= 5.1) weightIdx = 3;
+  else if (weight >= 1.5) weightIdx = 2;
+  else if (weight >= 0.18) weightIdx = 1;
+  else weightIdx = 0;
+
+  const rate = closest.values[weightIdx];
+  if (rate === undefined || isNaN(rate)) return null;
+
+  const dailyFeed = ((weight * rate) / 100).toFixed(1);
+  return `水温 **${closest.temp}℃**、体重 **${weight}g** 时，投饲率约 **${rate}%**，日投喂量约 **${dailyFeed}g/尾**`;
+}
+
+/**
+ * 在文本中找与用户水温相关的信息行
+ */
+function _findTempMatch(text, temp) {
+  const lines = text.split(/[。.\n]/);
+  for (const line of lines) {
+    if (line.includes(temp + '℃') || line.includes(temp + '°C') || line.includes(temp + '度')) {
+      const cleaned = line.replace(/^\s*[-*•●|]\s*/, '').trim();
+      if (cleaned.length > 15 && cleaned.length < 150) {
+        return cleaned;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * 在文本中找与用户溶氧值相关的信息行
+ */
+function _findDoMatch(text, doVal) {
+  const lines = text.split(/[。.\n]/);
+  for (const line of lines) {
+    if (line.includes(doVal + 'mg') || line.includes(doVal + ' mg')) {
+      const cleaned = line.replace(/^\s*[-*•●|]\s*/, '').trim();
+      if (cleaned.length > 15 && cleaned.length < 150) return cleaned;
+    }
+  }
+  return null;
 }
 
 /**
