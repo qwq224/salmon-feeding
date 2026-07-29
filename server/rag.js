@@ -51,8 +51,8 @@ function isInDomain(query) {
 // ============ 回答构建 (无 LLM) ============
 
 /**
- * 从知识库检索结果构建结构化回答
- * 不做 LLM 生成，直接整理原文摘要
+ * 从知识库检索结果构建简洁回答
+ * 只输出关键信息 + [来源:N] 标注，不展示检索元数据
  */
 function _buildKBAnswer(query, results, sources) {
   if (!results || results.length === 0) {
@@ -61,39 +61,42 @@ function _buildKBAnswer(query, results, sources) {
 
   let answer = '';
 
-  // 解析用户意图，优先提取最相关的信息
-  const q = query.toLowerCase();
-
-  // 提取关键数值参数
+  // 提取并展示关键数值参数
   const allText = results.map(r => r.text || '').join('\n');
-  const extractedParams = _extractKeyParams(allText);
-  if (extractedParams.length > 0) {
-    answer += '📊 **关键数据**\n';
-    for (const p of extractedParams.slice(0, 6)) {
+  const params = _extractKeyParams(allText);
+
+  if (params.length > 0) {
+    answer += '**📊 关键数据**\n';
+    for (const p of params.slice(0, 8)) {
       answer += `- ${p}\n`;
     }
     answer += '\n';
   }
 
-  // 展示搜索结果摘要
-  answer += '📚 **知识库检索结果**\n\n';
-  for (let i = 0; i < Math.min(results.length, 5); i++) {
+  // 整理核心信息点：提取最相关的片段，标注来源
+  answer += '**📋 相关内容**\n';
+  const seen = new Set();
+  let pointIdx = 0;
+
+  for (let i = 0; i < Math.min(results.length, 6); i++) {
     const r = results[i];
-    const scorePct = Math.round(r.score * 100);
-    const sourceTag = r.docType === 'web_article' ? '🌐' :
-                      r.docType === 'paper' ? '📄' :
-                      r.docType === 'manual' ? '📖' : '📌';
-    answer += `**[来源:${i + 1}]** ${sourceTag} *${r.docTitle || '未知来源'}* `;
-    if (r.sectionTitle) answer += `> ${r.sectionTitle} `;
-    answer += `(相关度: ${scorePct}%)\n`;
-    answer += `> ${r.text.substring(0, 400).replace(/\n/g, '\n> ')}\n\n`;
+    // 提取 2-3 句关键信息（取前 300 字的首句和关键句）
+    const sentences = r.text.split(/[。.；;！!？?\n]/).filter(s => s.trim().length > 8);
+    const keySentences = sentences.slice(0, 2).map(s => s.trim()).join('；');
+
+    if (keySentences && !seen.has(keySentences.substring(0, 50))) {
+      seen.add(keySentences.substring(0, 50));
+      pointIdx++;
+      answer += `${pointIdx}. ${keySentences} [来源:${i + 1}]\n`;
+    }
   }
 
-  if (results.length > 5) {
-    answer += `_…还有 ${results.length - 5} 条相关结果未展示_\n\n`;
+  // 如果结果多于展示的，提示
+  if (results.length > 6) {
+    answer += `\n_…共检索到 ${results.length} 条相关内容，点击下方来源卡片查看全部_\n`;
   }
 
-  answer += '---\n💡 **提示**: 以上内容全部来自本地知识库，如需更详细的信息，可以尝试更具体的关键词搜索。';
+  answer += `\n💡 点击 [来源:N] 可查看详细原文出处。`;
 
   return answer;
 }
