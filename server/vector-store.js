@@ -230,23 +230,32 @@ async function init(forceReindex = false) {
   const meta = _readMeta();
   console.log(`📚 向量库: ${meta.totalChunks} 个文本块, ${meta.shardCount} 个分片`);
 
-  if (forceReindex || meta.totalChunks === 0) {
-    // 尝试加载 BM25 缓存
-    const idxPath = path.join(DATA_DIR, 'bm25_index.json');
-    if (!forceReindex && fs.existsSync(idxPath)) {
-      try {
-        bm25Index = BM25Index.fromJSON(JSON.parse(fs.readFileSync(idxPath, 'utf-8')));
-        console.log(`🔍 BM25 索引已加载: ${Object.keys(bm25Index.terms).length} 个词`);
-      } catch { bm25Index = new BM25Index(); }
-    } else {
+  // 尝试加载 BM25 索引缓存
+  const idxPath = path.join(DATA_DIR, 'bm25_index.json');
+  if (!forceReindex && fs.existsSync(idxPath)) {
+    try {
+      bm25Index = BM25Index.fromJSON(JSON.parse(fs.readFileSync(idxPath, 'utf-8')));
+      console.log(`🔍 BM25 索引已加载: ${Object.keys(bm25Index.terms).length} 个词`);
+    } catch(e) {
+      console.log('⚠️ BM25 索引加载失败:', e.message);
       bm25Index = new BM25Index();
     }
-    _loadAllChunks();
-    chunksLoaded = true;
   } else {
     bm25Index = new BM25Index();
-    chunksLoaded = true;
-    _loadAllChunks();
+  }
+
+  _loadAllChunks();
+  chunksLoaded = true;
+
+  // 如果 BM25 为空但有 chunks，从 chunks 重建索引
+  if (Object.keys(bm25Index.terms).length === 0 && allChunks.length > 0) {
+    console.log('🔨 从 ' + allChunks.length + ' 个文本块重建 BM25 索引...');
+    for (const entry of allChunks) {
+      const tokens = tokenize(entry.chunk.text || '');
+      bm25Index.addDoc(entry.shardIdx, entry.localIdx, tokens);
+    }
+    _saveBM25Index();
+    console.log('✅ BM25 索引重建完成: ' + Object.keys(bm25Index.terms).length + ' 个词');
   }
 
   return meta;

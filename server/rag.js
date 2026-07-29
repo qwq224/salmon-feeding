@@ -135,10 +135,22 @@ function _buildTargetedAnswer(query, results) {
   const keywords = _extractKeywords(query);
   if (keywords.length === 0) return '';
 
+  // 先尝试从表格中提取（应急措施常见于表格）
+  const tableLines = _extractFromTable(results, keywords);
   const scored = [];
   const seen = new Set();
 
-  for (let i = 0; i < Math.min(results.length, 10); i++) {
+  // 表格内容优先
+  for (const tl of tableLines) {
+    const key = tl.text.substring(0, 50);
+    if (!seen.has(key)) {
+      seen.add(key);
+      scored.push({ text: tl.text, srcIdx: tl._src, hits: 10 });
+    }
+  }
+
+  // 再搜普通句子
+  for (let i = 0; i < Math.min(results.length, 8); i++) {
     const text = results[i].text || '';
     const hits = keywords.filter(kw => text.includes(kw)).length;
     if (hits === 0) continue;
@@ -156,27 +168,85 @@ function _buildTargetedAnswer(query, results) {
   scored.sort((a, b) => b.hits - a.hits);
   if (scored.length === 0) return '';
 
-  return scored.slice(0, 4)
+  return scored.slice(0, 5)
     .map((l, idx) => `${idx + 1}. ${l.text} [来源:${l.srcIdx}]`)
     .join('\n');
+}
+
+/**
+ * 从表格行提取相关信息（应急手册中大量关键数据在表格里）
+ * 表格被 smartChunk 压缩成: | 级别 | DO范围 | 症状 | 应急措施 | | 轻度 | 5-7 mg/L | 摄食减少 | ... |
+ */
+function _extractFromTable(results, keywords) {
+  const lines = [];
+  for (let i = 0; i < Math.min(results.length, 5); i++) {
+    const text = results[i].text || '';
+    if (!text.includes('|')) continue;
+    const hits = keywords.filter(kw => text.includes(kw)).length;
+    if (hits === 0) continue;
+
+    // 按双竖线 || 或 | | 拆分行
+    const rows = text.split(/\|\s*\|/);
+    for (const row of rows) {
+      const cells = row.split('|').map(c => c.trim()).filter(c => c && c.length > 1 && !/^[-:=]+$/.test(c));
+      if (cells.length < 2) continue;
+
+      // 跳过表头行（级别、项目、参数等）
+      const headerWords = /^(级别|指标|项目|参数|标准|范围|水温|体重|阶段|时间|指标|名称|饲料)$/;
+      if (cells.every(c => headerWords.test(c) || c.length < 3)) continue;
+
+      const rowHits = keywords.filter(kw => row.includes(kw)).length;
+      if (rowHits === 0) continue;
+
+      // 整理：取前2项做标签，后面的做内容
+      const label = cells.slice(0, 2).filter(c => !/^-+$/.test(c)).join('：');
+      const content = cells.slice(2).filter(c => c.length > 2).join(' → ');
+      const formatted = content ? `**${label}**：${content}` : cells.join(' | ');
+      if (formatted.length > 10 && formatted.length < 300) {
+        lines.push({ text: formatted, _src: i + 1 });
+      }
+    }
+  }
+  return lines.filter(l => keywords.some(kw => l.text.includes(kw))).slice(0, 5);
 }
 
 function _extractKeywords(query) {
   const cleaned = query
     .replace(/吗|呢|啊|吧|什么|怎么|怎样|如何|多少|哪|请|问|一下|帮我|告诉|应该|需要|可以|还是/g, ' ')
     .replace(/[？?！!，,。.]/g, ' ');
-  const words = cleaned.match(/[一-鿿]{2,}|[a-zA-Z]{2,}|\d+\.?\d*/g) || [];
+  const words = cleaned.match(/[一-鿿]{2,3}|[a-zA-Z]{2,}|\d+\.?\d*/g) || [];
   const result = [...new Set(words)].filter(w => w.length >= 2);
 
-  // 补充拆分：把复合词也拆成单词，提高匹配率（如 "氨氮超标" → +"氨氮" +"超标"）
+  // 补充拆分
   const extra = [];
   for (const w of result) {
     if (/^[一-鿿]{3,}$/.test(w)) {
-      for (let i = 0; i < w.length - 1; i++) {
-        extra.push(w.substring(i, i + 2)); // bigram 拆分
-      }
+      for (let i = 0; i < w.length - 1; i++) extra.push(w.substring(i, i + 2));
+    }
+    // 数字+单位 → 单独提取数字（"5mg" → +"5"）
+    const numMatch = w.match(/^(\d+\.?\d*)/);
+    if (numMatch && numMatch[1] !== w) extra.push(numMatch[1]);
+  }
+  // 中英同义词
+  const synonymMap = {
+    '溶氧': ['DO', '溶解氧', 'dissolved oxygen'],
+    '氨氮': ['NH3', 'NH₃', 'TAN', 'ammonia'],
+    '亚硝酸': ['NO2', 'NO₂', 'nitrite'],
+    '浮头': ['gasping', 'surface'],
+    '投喂': ['feeding', 'feed'],
+    '饲料': ['feed', 'diet'],
+    '疾病': ['disease', 'pathogen'],
+    '密度': ['density', 'stocking'],
+    '生长': ['growth', 'SGR'],
+    '应激': ['stress', 'cortisol'],
+    '缺氧': ['hypoxia', 'low oxygen', 'low DO'],
+  };
+  for (const [cn, ens] of Object.entries(synonymMap)) {
+    if (result.some(w => w.includes(cn) || cn.includes(w))) {
+      extra.push(...ens);
     }
   }
+
   return [...new Set([...result, ...extra])];
 }
 
@@ -209,8 +279,8 @@ function _bestMatchingSentence(text, keywords) {
 }
 
 function _validateAnswer(query, answer, intent) {
-  if (!answer || answer.trim().length < 15) return false;
-  if (answer.includes('📭')) return true; // 拒绝话术本身合法
+  if (!answer || answer.trim().length < 10) return false;
+  if (answer.includes('📭')) return true;
 
   const keywords = _extractKeywords(query);
   if (keywords.length === 0) return true;
@@ -218,23 +288,19 @@ function _validateAnswer(query, answer, intent) {
   const hits = keywords.filter(kw => answer.includes(kw)).length;
   const ratio = hits / keywords.length;
 
-  // 数字参数：回答中至少要包含问题里的某个数字，或相近值
+  // 表格答案放宽：有关键词匹配+数字相近即通过
+  const hasTableData = answer.includes('**') && answer.includes('：');
   const nums = query.match(/\d+\.?\d*/g);
-  if (nums && nums.length > 0) {
-    const answerNums = (answer.match(/\d+\.?\d*/g) || []).map(parseFloat);
-    const queryNums = nums.map(parseFloat);
-    // 至少有一个问题数字在回答中有近似匹配（±30%范围内）
-    const anyNumMatch = queryNums.some(qn =>
-      answerNums.some(an => {
-        if (Math.abs(an - qn) < 0.01) return true; // 精确匹配
-        if (Math.abs(an - qn) / Math.max(qn, 0.1) < 0.3) return true; // 30%范围内
-        return false;
-      })
-    );
-    if (!anyNumMatch) return false;
-  }
+  const queryNums = nums ? nums.map(parseFloat) : [];
+  const answerNums = (answer.match(/\d+\.?\d*/g) || []).map(parseFloat);
+  const anyNumMatch = queryNums.length === 0 || queryNums.some(qn =>
+    answerNums.some(an => Math.abs(an - qn) <= 2)
+  );
 
-  return ratio >= 0.3;
+  if (hasTableData && hits >= 1 && anyNumMatch) return true;
+  if (!anyNumMatch) return false;
+
+  return ratio >= 0.2;
 }
 
 function _parseQueryParams(query) {
