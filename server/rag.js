@@ -62,28 +62,90 @@ function _lookupFeedingRate(temp, weightG) {
 // ============ 领域检测 ============
 
 const DOMAIN_PATTERNS = [
+  // 明确养殖对象
   /三文鱼|大西洋鲑|虹鳟|鲑鱼|鳟鱼|salmon|trout|oncorhynchus|salmo/i,
-  /投喂|投饲|饲料|饵料|摄食|feeding|feed|diet|nutrition|FCR|饲料系数|feeding rate/i,
-  /水质|溶氧|DO|氨氮|亚硝酸|pH值?|碱度|水温|总悬浮物|TSS|water quality|dissolved oxygen|ammonia|nitrite/i,
-  /疾病|弧菌|IPN|IHN|ISA|海虱|水霉|细菌|病毒|疫苗|免疫|disease|pathogen|vaccine|health|welfare/i,
-  /养殖|密度|放养|RAS|循环水|网箱|鱼池|流水池|aquaculture|farming|cage|recirculating|stocking/i,
-  /生长|体重|体长|SGR|TGC|growth|weight|biomass|metabolism/i,
-  /市场|价格|成本|经济|盈亏|market|price|economic|cost|profit/i,
-  /标准|法规|认证|ASC|BAP|GlobalGAP|绿色食品|standard|regulation|certification/i,
-  /收获|捕捞|加工|屠宰|品质|HACCP|harvest|slaughter|processing|quality/i,
-  /繁殖|育苗|鱼苗|鱼卵|降海|smolt|银化|breeding|hatchery|juvenile/i,
-  /环境|可持续|排放|氮磷|environment|sustainable|effluent|waste/i,
+  // 技术术语
+  /投喂|投饲|饲料|饵料|摄食|feeding|feed|diet|nutrition|FCR|饲料系数/i,
+  /水质|溶氧|DO|氨氮|亚硝酸|pH值?|碱度|水温|TSS|water quality|ammonia|nitrite/i,
+  /疾病|弧菌|IPN|IHN|ISA|海虱|水霉|细菌|病毒|疫苗|免疫|disease|pathogen|vaccine/i,
+  /养殖|密度|放养|RAS|循环水|网箱|鱼池|aquaculture|farming|cage|recirculating|stocking/i,
+  /生长|体重|体长|SGR|TGC|growth|weight|biomass/i,
+  /市场|价格|成本|经济|盈亏|market|price|economic|cost/i,
+  /标准|法规|认证|ASC|BAP|GlobalGAP|绿色食品|standard|regulation/i,
+  /收获|捕捞|加工|屠宰|HACCP|harvest|slaughter|processing|quality/i,
+  /繁殖|育苗|鱼苗|鱼卵|降海|smolt|银化|breeding|hatchery/i,
+  /环境|可持续|排放|氮磷|environment|sustainable|effluent/i,
   /鱼体重|投饲率|饲料系数|日增重|特定生长率|肥满度|肝体比/i,
+  // 口语化 — 含有"鱼"的日常问题
+  /鱼.{0,5}(不吃|不食|死了|病|浮头|游|长|烂|出血|掉鳞|没精神)/,
+  /鱼.{0,3}(怎么|为啥|为什么|好像|突然|最近|一直)/,
+  /(不吃|不食|喂|吃).{0,3}(东西|食|饲料|什么|了吗|了呀)/,
+  /我的鱼|这鱼|养的鱼|塘里的鱼|池里的鱼|箱里的鱼/,
+  // 口语化水质
+  /水.{0,3}(浑|臭|变|脏|绿|黄|有问题|不行|不好)/,
+  /(缺氧|浮头|翻肚|大口喘气|呼吸急促|游到水面)/,
+  // 口语化异常 (要求同时含"鱼")
+  /(生病|得病|发病|有病|不对劲|不正常|出问题|异常).{0,5}(了|啦|吗)/,
+  // 养鱼场景默认词 — 这些词出现且同时提到鱼/水/养殖 → 在领域内
+  /(怎么办|咋办|怎么处理|怎么治|用什么药|要注意什么).{0,5}(鱼|水|塘|池|箱)/,
+  /(鱼|水|塘|池|箱).{0,5}(怎么办|咋办|怎么处理|怎么治|要注意什么)/,
 ];
 
+// 低置信度兜底：只要提到了"鱼"且不是在明显的非养殖语境中
+const HAS_FISH = /[鱼漁]|fish/i;
+const NON_FISH_CONTEXT = /(钓鱼|捕鱼|吃鱼|烧鱼|蒸鱼|煎鱼|炸鱼|水煮鱼|酸菜鱼|烤鱼|生鱼片|鱼香|咸鱼|金鱼|热带鱼|观赏鱼|鲨鱼|鲸鱼)/i;
+
 function isInDomain(query) {
-  return DOMAIN_PATTERNS.some(p => p.test(query));
+  // 高置信度模式直接通过
+  if (DOMAIN_PATTERNS.some(p => p.test(query))) return true;
+  // 兜底：提到了"鱼"且不在明显的非养殖语境中
+  if (HAS_FISH.test(query) && !NON_FISH_CONTEXT.test(query)) return true;
+  return false;
+}
+
+// ============ 高频口语映射 (直接匹配 FAQ) ============
+
+const COLLOQUIAL_FAQS = [
+  {
+    pattern: /(不吃|不食|拒食|厌食|不吃东西|不吃食|没胃口)/,
+    answer: '三文鱼不吃食的常见原因（按概率排序）：\n1. 溶氧偏低（<6mg/L，占40%）— 先测DO\n2. 水温骤变（>2℃变化）— 检查温度记录\n3. 氨氮超标（>0.2mg/L）— 测NH₃-N\n4. 疾病（弧菌/IPN/寄生虫）— 检查体表和鳃\n5. 应激（刚分级/运输/转池后）— 停食24-48h观察\n6. 饲料更换 — 新旧料逐步过渡7-10天\n\n建议步骤：停食1天 → 检测水质（DO/NH₃/T）→ 观察鱼群行为 → 逐一排查上述原因。',
+  },
+  {
+    pattern: /(生病|得病|有病|不对劲|不正常|好像病)/,
+    answer: '鱼行为异常时的排查步骤：\n1. 观察鱼群行为（浮头/离群/擦底/厌食/游姿异常）\n2. 检查水质（DO、NH₃、NO₂⁻、pH、水温）\n3. 捞3-5尾鱼检查体表（出血/白点/溃疡/寄生虫/鳃色）\n4. 如有死鱼，解剖检查内脏（肝色/肠道/腹水）\n5. 必要时送实验室做细菌培养或病毒检测\n\n常见病参考：弧菌病（体表出血）、IPN（发黑螺旋游动）、水霉（白色棉絮状）、小瓜虫（体表白点）。',
+  },
+  {
+    pattern: /水.{0,3}(浑|臭|脏|绿|黄|有问题|不好|不行)/,
+    answer: '水质异常排查：\n1. 水浑（浑浊）→ 悬浮物过多，检查微筛机/加强过滤\n2. 水臭（异味）→ 有机物腐败/厌氧区，检查死鱼/加强曝气\n3. 水绿（藻类）→ 光照过强+营养盐高，遮光+增加换水\n4. 泡沫多 → 蛋白质积累，加强蛋白分离器/增加换水\n5. 水面有油膜 → 饲料脂肪析出/水泵漏油，检查设备\n\n先测DO、NH₃、NO₂⁻、pH确认水质安全。',
+  },
+  {
+    pattern: /(鱼死|死了|死亡|死鱼)/,
+    answer: '发现死鱼的紧急处理：\n1. 立即捞出所有死鱼，计数并记录症状\n2. 停食24-48小时\n3. 检测水质（DO/NH₃/NO₂⁻/T/pH）\n4. 检查死鱼外观（体表出血？鳃色？眼球？腹部？）\n5. 正常死亡率<0.05%/天，超过0.1%需排查\n6. 如连续死亡3天以上，取样送实验室检测\n\n常见致死原因：缺氧、氨氮中毒、弧菌病、IPN（稚鱼）。',
+  },
+  {
+    pattern: /(鱼浮头|浮头|缺氧|喘气|大口呼吸)/,
+    answer: '鱼浮头/缺氧的应急处理：\n1. 立即全负荷增氧+启动纯氧补充\n2. 停止投喂（消化耗氧）\n3. 加大换水量（水源DO需达标）\n4. 排查缺氧原因：停电/设备故障/密度过高/高温/生物滤池堵塞\n5. DO恢复至>7mg/L后逐步恢复正常\n\nDO分级：轻度5-7mg/L(摄食减少)，中度3-5mg/L(浮头)，重度<3mg/L(大口呼吸/失衡)，危急<2mg/L(大批死亡)。',
+  },
+];
+
+function _checkColloquialFAQs(query) {
+  for (const faq of COLLOQUIAL_FAQS) {
+    if (faq.pattern.test(query)) return faq.answer;
+  }
+  return null;
 }
 
 // ============ 回答构建 ============
 
 function _buildKBAnswer(query, results, sources) {
   if (!results || results.length === 0) return '';
+
+  // 优先匹配口语化 FAQ
+  const faqAnswer = _checkColloquialFAQs(query);
+  if (faqAnswer) {
+    if (sources.length > 0) return faqAnswer + '\n\n📖 参考知识库文档 [来源:1]';
+    return faqAnswer;
+  }
 
   const qParams = _parseQueryParams(query);
   const intent = _classifyIntent(query, qParams);
@@ -241,8 +303,10 @@ function _extractKeywords(query) {
     '生长': ['growth', 'SGR'],
     '应激': ['stress', 'cortisol'],
     '缺氧': ['hypoxia', 'low oxygen', 'low DO'],
-    '不吃食': ['拒食', '厌食', '摄食差', '摄食减少'],
-    '不吃': ['拒食', '厌食'],
+    '不吃食': ['拒食', '厌食', '摄食差', '摄食减少', '食欲不振', '食欲减退'],
+    '不吃': ['拒食', '厌食', '食欲不振'],
+    '不吃东西': ['拒食', '厌食', '不吃食'],
+    '鱼不吃': ['不吃食', '拒食', '厌食'],
   };
   for (const [cn, ens] of Object.entries(synonymMap)) {
     if (result.some(w => w.includes(cn) || cn.includes(w)) || query.includes(cn)) {
@@ -254,7 +318,7 @@ function _extractKeywords(query) {
 }
 
 function _bestMatchingSentence(text, keywords) {
-  const sentences = text.split(/[。.；;！!？?\n]/).map(s => s.trim()).filter(s => {
+  const sentences = text.split(/[。.；;！!\n]/).map(s => s.trim()).filter(s => {
     if (s.length < 10 || s.length > 200) return false;
     if (/^\d+[a-z]?\s*[|]/.test(s)) return false;       // "2g | — | 5000" 表格碎片
     if (/^[-\s—]*$/.test(s)) return false;               // 纯分隔线
@@ -267,14 +331,13 @@ function _bestMatchingSentence(text, keywords) {
   for (const s of sentences) {
     if (/^\s*[#|\-*>]/.test(s)) continue;
     if (/\|/.test(s)) continue;                         // 含管道符=表格碎片
-    if (/^Q\d+[:：]/.test(s)) continue;
     if (/第[一二三四五六七八九十]章/.test(s)) continue;
     if (/^[①②③④⑤⑥⑦⑧⑨⑩]/.test(s)) continue;
 
     const hits = keywords.filter(kw => s.includes(kw)).length;
     if (hits > bestHits) {
       bestHits = hits;
-      best = s.replace(/\*\*/g, '').replace(/^\d+[\.\、\)）]\s*/, '').trim();
+      best = s.replace(/\*\*/g, '').replace(/^Q?\d+[\.\、\)）：:]\s*/, '').trim();
     }
   }
 
@@ -288,8 +351,10 @@ function _validateAnswer(query, answer, intent) {
   const keywords = _extractKeywords(query);
   if (keywords.length === 0) return true;
 
-  const hits = keywords.filter(kw => answer.includes(kw)).length;
-  const ratio = hits / keywords.length;
+  // 只计算基础关键词的命中率（不含同义词扩展的英文词）
+  const baseKeywords = keywords.filter(kw => /[一-鿿]/.test(kw) || /^\d+/.test(kw));
+  const hits = baseKeywords.filter(kw => answer.includes(kw)).length;
+  const ratio = baseKeywords.length > 0 ? hits / baseKeywords.length : 1;
 
   // 表格答案放宽：有关键词匹配+数字相近即通过
   const hasTableData = answer.includes('**') && answer.includes('：');
