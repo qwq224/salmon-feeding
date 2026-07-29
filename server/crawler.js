@@ -1,5 +1,5 @@
 // ================================================================
-// crawler.js — 水产养殖文档自动采集器
+// crawler.js v2 — 水产养殖文档自动采集器
 // 从多个可达数据源抓取文档，自动入库
 // ================================================================
 
@@ -8,6 +8,21 @@ const vstore = require('./vector-store');
 const { embedBatch } = require('./embedder');
 const fs = require('fs');
 const path = require('path');
+
+// User-Agent 轮换池 (降低被反爬概率)
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0',
+  'SalmonFeedingAI/2.0 (research bot; academic use only)',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0',
+];
+let _uaIdx = 0;
+function _nextUA() {
+  const ua = USER_AGENTS[_uaIdx % USER_AGENTS.length];
+  _uaIdx++;
+  return ua;
+}
 
 // ============ 可访问数据源配置 ============
 
@@ -77,6 +92,68 @@ const SOURCES = {
     baseURL: 'http://www.fishfirst.cn',
     pages: [
       { url:'http://www.fishfirst.cn/article-1.html', title:'中国水产频道 - 养殖技术', tags:['水产频道','技术','养殖'], lang:'zh' },
+    ],
+  },
+
+  // 🆕 FAO 技术论文深度文档
+  fao_deep: {
+    name: 'FAO Technical Papers',
+    baseURL: 'https://www.fao.org',
+    pages: [
+      { url:'https://www.fao.org/fishery/en/publication/28947', title:'FAO Aquaculture Feed Ingredients', tags:['FAO','饲料','营养'], lang:'en' },
+      { url:'https://www.fao.org/fishery/en/global-search?q=salmon%20feeding%20nutrition', title:'FAO Salmon Feeding Search', tags:['FAO','三文鱼','投喂'], lang:'en' },
+      { url:'https://www.fao.org/fishery/en/global-search?q=aquaculture%20RAS%20recirculating', title:'FAO RAS Technical Papers', tags:['FAO','RAS','循环水'], lang:'en' },
+    ],
+  },
+
+  // 🆕 Nofima — 挪威水产研究所 (全球顶级三文鱼研究机构)
+  nofima: {
+    name: 'Nofima Research',
+    baseURL: 'https://nofima.com',
+    pages: [
+      { url:'https://nofima.com/en/research-topics/aquaculture/', title:'Nofima Aquaculture Research', tags:['Nofima','研究','三文鱼'], lang:'en' },
+      { url:'https://nofima.com/en/research-topics/feed-and-nutrition/', title:'Nofima Feed & Nutrition', tags:['Nofima','饲料','营养'], lang:'en' },
+      { url:'https://nofima.com/en/research-topics/breeding-and-genetics/', title:'Nofima Breeding & Genetics', tags:['Nofima','育种','遗传'], lang:'en' },
+      { url:'https://nofima.com/en/research-topics/fish-health/', title:'Nofima Fish Health', tags:['Nofima','疾病','健康'], lang:'en' },
+    ],
+  },
+
+  // 🆕 开放获取学术论文 (MDPI / Frontiers)
+  openaccess: {
+    name: 'Open Access Journals',
+    baseURL: 'https://www.mdpi.com',
+    pages: [
+      { url:'https://www.mdpi.com/search?q=salmon+aquaculture+feeding+nutrition', title:'MDPI Salmon Feeding Papers', tags:['MDPI','学术','投喂'], lang:'en' },
+      { url:'https://www.frontiersin.org/search?q=salmon+aquaculture+water+quality', title:'Frontiers Salmon Water Quality', tags:['Frontiers','学术','水质'], lang:'en' },
+    ],
+  },
+
+  // 🆕 水产养殖网 (中文)
+  shuichan: {
+    name: '水产养殖网',
+    baseURL: 'https://www.shuichan.cc',
+    pages: [
+      { url:'https://www.shuichan.cc/article/list_20_1.html', title:'水产养殖网 - 养殖技术', tags:['水产养殖网','技术','养殖'], lang:'zh' },
+      { url:'https://www.shuichan.cc/article/list_22_1.html', title:'水产养殖网 - 病害防治', tags:['水产养殖网','病害','防治'], lang:'zh' },
+      { url:'https://www.shuichan.cc/article/list_25_1.html', title:'水产养殖网 - 饲料营养', tags:['水产养殖网','饲料','营养'], lang:'zh' },
+    ],
+  },
+
+  // 🆕 Semantic Scholar 学术论文查询 (修复 Bug: 之前引用但未定义)
+  semanticscholar: {
+    name: 'Semantic Scholar',
+    baseURL: 'https://api.semanticscholar.org',
+    queries: [
+      'salmon+feeding+rate+model+temperature',
+      'Atlantic+salmon+feed+conversion+ratio+FCR',
+      'rainbow+trout+nutrition+requirement+feeding',
+      'salmon+RAS+recirculating+aquaculture+system',
+      'salmon+welfare+stocking+density+growth',
+      'salmon+alternative+protein+feed+fishmeal+replacement',
+      'aquaculture+sustainability+environmental+impact',
+      'salmon+disease+prevention+vaccine+aquaculture',
+      'recirculating+aquaculture+system+design+operation',
+      'Atlantic+salmon+growth+model+bioenergetics',
     ],
   },
 };
@@ -421,6 +498,476 @@ NH₃ → (Nitrosomonas) → NO₂⁻ → (Nitrobacter) → NO₃⁻
 | 喹乙醇 | 致突变性 |
 `,
   },
+
+  // 🆕 第4篇: RAS 循环水系统
+  {
+    title: 'RAS 循环水养殖系统设计与运维指南',
+    type: 'manual',
+    author: 'SalmonFeeding 知识工程组',
+    tags: ['RAS', '循环水', '系统设计', '生物滤池', '硝化', '消毒'],
+    content: `# RAS 循环水养殖系统设计与运维指南
+
+## 第一章：RAS 系统架构
+
+### 1.1 核心处理单元
+
+一个完整的 RAS 系统包括以下核心单元:
+
+| 单元 | 功能 | 关键参数 |
+|------|------|---------|
+| 固液分离 (机械过滤) | 去除悬浮固体 (TSS) | 微筛机 40-100μm, TSS<15 mg/L |
+| 生物滤池 (硝化) | NH₃→NO₂⁻→NO₃⁻ | 氨氮去除率>90%, HRT 4-8min |
+| CO₂ 脱气 | 去除溶解 CO₂ | CO₂<15 mg/L, 气水比 5:1-10:1 |
+| 增氧/充氧 | DO≥9 mg/L | 纯氧/LHO, O₂利用率>85% |
+| 消毒 (UV/O₃) | 杀灭病原体 | UV 剂量 30-50 mJ/cm² |
+| 温控 | 维持最佳水温 12-18℃ | 热泵/冷却塔, ±1℃ |
+
+### 1.2 设计参数速查
+
+| 参数 | 推荐值 | 单位 |
+|------|--------|------|
+| 循环率 | 1-4 | 次/小时 |
+| 补水率 | 5-15% | 系统总量/天 |
+| 水力停留时间 (HRT) | 0.5-2 | 小时 |
+| 最大养殖密度 | 40-80 | kg/m³ |
+| 生物滤池负荷 | 0.2-0.5 | g TAN/m²/d |
+| MBBR 填料填充率 | 30-50% | — |
+| 系统总动力 | 10-20 | kW/吨鱼 |
+
+## 第二章：生物滤池硝化系统
+
+### 2.1 硝化过程
+
+NH₄⁺ + 1.5O₂ →(Nitrosomonas)→ NO₂⁻ + 2H⁺ + H₂O
+NO₂⁻ + 0.5O₂ →(Nitrobacter)→ NO₃⁻
+
+**关键消耗**: 每氧化 1g NH₃-N → 消耗 4.57g O₂ + 7.14g CaCO₃ 碱度
+
+### 2.2 硝化速率影响因素
+
+| 因素 | 最佳范围 | 影响 |
+|------|---------|------|
+| 水温 | 25-30℃ | <10℃速率降50% |
+| pH | 7.5-8.5 | <6.5 显著抑制 |
+| DO | ≥4 mg/L | <2 mg/L 硝化停止 |
+| 碱度 | 50-200 mg/L | <20 硝化受限 |
+| TAN | 0.5-2.0 mg/L | >3.0 抑制硝化菌 |
+| 有机物 | 越低越好 | BOD 高→异养菌竞争 |
+
+### 2.3 MBBR vs 固定床
+
+| 特性 | MBBR | 固定床 (滴滤) |
+|------|------|-------------|
+| 比表面积 | 500-800 m²/m³ | 150-300 m²/m³ |
+| 堵塞风险 | 低 (自清洁) | 中-高 |
+| TAN 去除率 | 0.3-0.8 g/m²/d | 0.1-0.4 g/m²/d |
+| 能耗 | 低-中 | 中 |
+| 维护 | 简单 | 需反冲洗 |
+
+## 第三章：固体去除与消毒
+
+### 3.1 固体分级去除
+
+1. **粗滤 (1000-3000μm)**: 弧形筛/滚筒筛, 去除残饵和粪便
+2. **精滤 (40-100μm)**: 微筛机/砂滤, 确保 TSS<15 mg/L
+3. **蛋白分离器**: 去除溶解有机物, 泡沫分选
+4. **沉淀池**: 水力停留 15-30min, 去除可沉降固体
+
+### 3.2 消毒方案
+
+| 方法 | 剂量 | 优点 | 缺点 |
+|------|------|------|------|
+| UV 紫外线 | 30-50 mJ/cm² | 无残留, 安全 | 水质影响(TSS↑→效果↓) |
+| 臭氧 O₃ | 0.1-0.3 mg/L | 强氧化, 去色 | 需监测余量, ORP<350mV |
+| 过氧乙酸 | 0.5-2.0 mg/L | 广谱杀菌 | 成本较高 |
+
+## 第四章：运行监控
+
+### 4.1 日常检查清单
+
+| 项目 | 频率 | 目标值 | 报警值 |
+|------|------|--------|--------|
+| 循环泵流量 | 每日 | 设计值±10% | ±20% |
+| 微筛机前后液位差 | 每日 | <5 cm | >10 cm (堵塞) |
+| 生物滤池进出口 NH₃ | 每周2次 | 去除率>90% | <70% |
+| 充氧锥 DO 出口 | 每日 | >20 mg/L | <15 mg/L |
+| 养殖池 DO | 连续 | ≥9 mg/L | <7 mg/L |
+| 补水流量 | 每日 | 5-15%/天 | <3% 或 >20% |
+| 碱度 | 每周1次 | 50-200 mg/L | <30 mg/L |
+
+### 4.2 常见故障与应急
+
+| 故障 | 症状 | 应急措施 |
+|------|------|---------|
+| 停电 | 泵停止,DO 骤降 | 启动发电机/UPS, 纯氧应急供氧 |
+| 生物滤池崩溃 | NH₃ 快速上升 | 停食, 大换水, 添加硝化菌种 |
+| 微筛机堵塞 | 液位差过大 | 切换备用, 清洗筛网 |
+| 管道破裂 | 水位下降 | 关闭阀门, 启动补水泵 |
+`,
+  },
+
+  // 🆕 第5篇: 经济分析与商业模式
+  {
+    title: '三文鱼养殖经济分析与商业模式',
+    type: 'manual',
+    author: 'SalmonFeeding 知识工程组',
+    tags: ['经济', '成本', '市场', '商业模式', '投资', '盈亏'],
+    content: `# 三文鱼养殖经济分析与商业模式
+
+## 第一章：成本结构分析
+
+### 1.1 典型 RAS 陆基养殖成本构成
+
+| 成本项 | 占比 | 数值 (元/kg) | 说明 |
+|--------|------|-------------|------|
+| 饲料 | 45-55% | 18-25 | 最大单项成本 |
+| 苗种 | 8-12% | 3-6 | 100g 降海 smolt |
+| 电力 | 10-15% | 5-9 | 水泵+增氧+温控 |
+| 人工 | 10-15% | 5-8 | 技术员+操作工 |
+| 折旧 | 8-12% | 4-7 | 基建+设备 15年摊销 |
+| 动保/疫苗 | 3-5% | 1.5-3 | 疫苗+消毒+药品 |
+| 其他 | 5-8% | 3-5 | 运输/检测/保险 |
+| **合计** | **100%** | **40-63** | 挪威网箱约35元/kg |
+
+### 1.2 饲料成本优化策略
+
+| 策略 | 预期效果 |
+|------|---------|
+| FCR 从1.3→1.1 | 饲料成本降 15% |
+| 替代蛋白 (昆虫粉替代25%鱼粉) | 饲料单价降 8-12% |
+| 精准投喂 (减少残饵) | 节省 5-10% 饲料 |
+| 批量采购 (年>500吨) | 单价降 5-8% |
+| 使用副产品 (鱼油/磷虾粉) | 营养成分更优 |
+
+## 第二章：市场规模与行情
+
+### 2.1 全球三文鱼产量
+
+| 国家 | 年产量 (万吨) | 占比 | 主要模式 |
+|------|-------------|------|---------|
+| 挪威 | 150 | 55% | 海水网箱 |
+| 智利 | 100 | 37% | 海水网箱 |
+| 英国 (苏格兰) | 20 | 7% | 海水网箱 |
+| 加拿大 | 15 | 5% | 海水网箱 |
+| 法罗群岛 | 8 | 3% | 海水网箱 |
+| 中国 | 5+ | — | 陆基RAS+网箱 |
+| 冰岛 | 5 | 2% | 陆基RAS |
+
+全球总产量约 270万吨/年, 价值约 2000亿人民币
+
+### 2.2 市场价格参考 (2025-2026)
+
+| 规格 | 价格 (元/kg) | 价格 (NOK/kg) |
+|------|-------------|---------------|
+| 3-4 kg (鲜整条) | 55-70 | 80-105 |
+| 4-5 kg (鲜整条) | 60-75 | 90-115 |
+| 5-6 kg (鲜整条) | 65-85 | 95-125 |
+| 鱼柳 (冷冻) | 90-120 | 130-180 |
+| 即食烟熏切片 | 180-300 | 260-450 |
+
+## 第三章：投资回报分析
+
+### 3.1 陆基 RAS 养殖场投资估算 (年产1000吨)
+
+| 投资项目 | 金额 (万元) |
+|---------|-----------|
+| 场地/土建 | 1500-2500 |
+| RAS 设备 (生物滤池/微筛/充氧/管道) | 3000-5000 |
+| 温控系统 (热泵+冷却塔) | 800-1200 |
+| 配电/自控/监控 | 500-800 |
+| 辅助设施 (冷库/实验室/办公室) | 500-1000 |
+| 设计/监理/不可预见费 | 500-800 |
+| **总投资** | **6800-12000** |
+
+### 3.2 盈亏平衡分析
+
+以年产 1000 吨、售价 60 元/kg 计:
+- 年收入: 6000 万元
+- 年运营成本: 4000-5000 万元
+- 年毛利: 1000-2000 万元
+- 投资回收期: 4-8 年
+
+**关键盈亏因子**: FCR 每降低 0.1, 年利润增加约 120万元
+`,
+  },
+
+  // 🆕 第6篇: 苗种培育与降海驯化
+  {
+    title: '三文鱼苗种培育与降海驯化技术',
+    type: 'manual',
+    author: 'SalmonFeeding 知识工程组',
+    tags: ['苗种', '育苗', '降海', 'smolt', '银化', '光周期'],
+    content: `# 三文鱼苗种培育与降海驯化技术
+
+## 第一章：育苗阶段划分
+
+### 1.1 生命周期阶段
+
+| 阶段 | 体重 | 时长 | 关键管理 |
+|------|------|------|---------|
+| 鱼卵 (Eyed Egg) | — | 30-60天 | 温度控制 6-10℃, DO>8 mg/L |
+| 仔鱼 (Alevin) | 0.1-0.2g | 3-6周 | 卵黄囊吸收, 避光, 静水 |
+| 稚鱼 (Fry) | 0.2-1.5g | 4-8周 | 开口投喂, 活饵→微颗粒 |
+| 幼鱼 (Parr) | 1.5-50g | 3-6月 | 快速生长, 分级管理 |
+| 降海幼鲑 (Smolt) | 50-120g | 2-3月 | 银化驯化, 转入海水 |
+
+### 1.2 各阶段投喂要点
+
+| 阶段 | 投饲率 (%) | 蛋白 (%) | 脂肪 (%) | 粒径 (mm) | 频率 |
+|------|-----------|---------|---------|---------|------|
+| 开口仔鱼 | 6-10 | ≥52 | ≥15 | 0.1-0.3 | 12-24次/天 |
+| 稚鱼 | 4-8 | ≥48 | ≥18 | 0.3-1.0 | 8-12次/天 |
+| 幼鱼前期 | 3-5 | ≥45 | ≥20 | 1.0-2.5 | 6-8次/天 |
+| 幼鱼后期 | 2-4 | ≥42 | ≥22 | 2.5-4.0 | 4-6次/天 |
+| Smolt | 1.5-2.5 | ≥40 | ≥26 | 4.0-6.0 | 2-3次/天 |
+
+## 第二章：Smoltification (银化/降海驯化)
+
+### 2.1 银化生理变化
+
+大西洋鲑在降海前经历一系列生理变化:
+
+1. **外观变化**: 体色由深色→银白色, Parr Mark (幼鱼斑纹) 消失
+2. **鳃部变化**: 鳃 Na⁺/K⁺-ATPase 活性↑3-5倍, 适应海水渗透压
+3. **代谢变化**: 海水适应能力↑, 生长潜力激活
+4. **行为变化**: 趋流性增强, 集群游向水流
+
+### 2.2 光周期控制方案
+
+光周期是调控 Smoltification 的核心手段:
+
+| 阶段 | 光照方案 | 时长 | 目的 |
+|------|---------|------|------|
+| 冬季模拟 (Winter Signal) | LD 12:12 | 6周 | 启动银化程序 |
+| 春季模拟 (Spring Signal) | LD 24:0 | 6-8周 | 加速银化完成 |
+| 维持 | LD 24:0 或自然光 | — | 保持银化状态 |
+
+### 2.3 Smolt 质量评估
+
+| 指标 | 合格标准 | 检测方法 |
+|------|---------|---------|
+| 鳃 Na/K-ATPase | >10 μmol ADP/mg protein/h | 酶活分析 |
+| 海水挑战试验 | 96h 存活率>95% @35‰ | 直接放入海水 |
+| 体长 | ≥12 cm | 抽样30尾 |
+| 体重 | ≥50 g | 抽样30尾 |
+| 肥满度 (CF) | 0.9-1.2 | 体重/体长³×100 |
+| 银化指数 | 外观评分≥3/5 | 视觉评估 |
+
+## 第三章：育苗系统管理
+
+### 3.1 稚鱼期关键参数
+
+| 参数 | 最佳范围 |
+|------|---------|
+| 水温 | 12-16℃ |
+| DO | ≥9 mg/L (饱和度>90%) |
+| 光照强度 | 200-500 lux |
+| 水流速 | 1-2 体长/秒 |
+| 密度 (稚鱼) | <10 kg/m³ |
+| 日换水率 | 100-300% (流水) |
+
+### 3.2 分级管理
+
+定期分级 (Grading) 是防止同类相残、保证均匀生长的关键:
+- 体重>1g 后每周分级1次
+- CV (变异系数) 控制在 <15%
+- 分级器间距按体重设定，每2周调整
+`,
+  },
+
+  // 🆕 第7篇: 收获加工与品质控制
+  {
+    title: '三文鱼收获加工与品质控制标准',
+    type: 'manual',
+    author: 'SalmonFeeding 知识工程组',
+    tags: ['收获', '加工', '品质', 'HACCP', '屠宰', '冷链'],
+    content: `# 三文鱼收获加工与品质控制标准
+
+## 第一章：收获前管理
+
+### 1.1 出鱼前准备
+
+| 时间节点 | 操作 | 说明 |
+|---------|------|------|
+| 出鱼前 7天 | 停用药物 | 确保休药期已过 |
+| 出鱼前 3天 | 停食 (Starvation) | 清空肠道, 减少运输污染 |
+| 出鱼前 1天 | 降温至 2-4℃ | 降低代谢, 减少应激 |
+| 出鱼前 2小时 | 抽样检测 | 品质指标确认 |
+| 出鱼时 | CO₂ 麻醉或电击 | 人道的宰前处理 |
+
+### 1.2 品质评估指标
+
+| 指标 | 优级 | 标准级 |
+|------|------|--------|
+| 体色 | 银白光亮, 无损伤 | 轻微变色 |
+| 体表粘液 | 完整均匀 | 部分缺失 |
+| 鳃色 | 鲜红, 无粘液 | 暗红 |
+| 眼球 | 饱满透明 | 轻微凹陷 |
+| 肌肉弹性 | 按压后即刻恢复 | 较慢恢复 |
+| 脂肪含量 | 12-18% | 10-20% |
+| Pigment (Astaxanthin) | ≥6 mg/kg | ≥4 mg/kg |
+
+## 第二章：屠宰与加工
+
+### 2.1 人道屠宰流程
+
+| 步骤 | 方法 | 参数 |
+|------|------|------|
+| 1. 镇静 | CO₂ 饱和水 (或低温) | 2-4℃, 3-5min |
+| 2. 击昏 | 电击/敲击 | 50-100V, 3-5s |
+| 3. 放血 | 鳃部动脉切开 | 冰水 0-2℃, 15-20min |
+| 4. 去内脏 | 机械/手工 | 避免胆囊破裂 |
+| 5. 清洗 | 高压水冲洗腹腔 | 0-2℃ 清水 |
+
+### 2.2 加工产品形态
+
+| 产品形态 | 加工要求 | 温度要求 |
+|---------|---------|---------|
+| 鲜整条 (Fresh Whole) | 带内脏/去内脏 | 0-2℃ (冰鲜) |
+| 鲜鱼柳 (Fresh Fillet) | 去皮去骨 | 0-2℃ |
+| 冷冻整条 (Frozen Whole) | -40℃ 速冻 | ≤-18℃ 储存 |
+| 冷冻鱼柳 (Frozen Fillet) | 真空独立包装 | ≤-18℃ |
+| 烟熏切片 (Smoked Sliced) | 冷熏/热熏 | 0-4℃ (冷熏) |
+| 即食 (RTE) | HPP 高压灭菌 | 0-4℃ |
+
+### 2.3 冷链管理
+
+| 环节 | 温度要求 | 时限 |
+|------|---------|------|
+| 宰后冷却 | 0-2℃ | <2小时 |
+| 加工车间 | <10℃ | — |
+| 包装 | 0-2℃ | <30min |
+| 冷藏运输 | 0-2℃ | <72小时 |
+| 冷藏展示 | 0-2℃ | <48小时 |
+| 冷冻储存 | ≤-18℃ | <18个月 |
+
+## 第三章：HACCP 关键控制点
+
+### 3.1 三文鱼加工 HACCP 计划
+
+| CCP | 危害 | 控制措施 | 关键限值 | 监控频率 |
+|-----|------|---------|---------|---------|
+| 原料接收 | 微生物/药残 | 供应商审核 | 药残报告合格 | 每批次 |
+| 冷藏 | 微生物生长 | 温度控制 | 0-2℃ | 连续+每2h记录 |
+| 去内脏 | 交叉污染 | 刀具消毒 | 82℃热水 | 每30分钟 |
+| 金属检测 | 物理异物 | 金属探测器 | Fe≤2.0mm, SS≤3.0mm | 每件产品 |
+| 包装密封 | 二次污染 | 密封性检查 | 真空度达标 | 每30分钟 |
+| 冷藏运输 | 冷链断裂 | 温度记录仪 | 全程 0-2℃ | 连续记录 |
+
+### 3.2 微生物标准
+
+| 指标 | 限值 (CFU/g) |
+|------|-------------|
+| 菌落总数 (APC) | ≤5×10⁵ |
+| 大肠菌群 | ≤100 |
+| 大肠杆菌 | ≤10 |
+| 金黄色葡萄球菌 | ≤100 |
+| 沙门氏菌 | 不得检出/25g |
+| 单增李斯特菌 | 不得检出/25g |
+`,
+  },
+
+  // 🆕 第8篇: 全球标准与法规
+  {
+    title: '三文鱼养殖全球标准与法规汇编',
+    type: 'manual',
+    author: 'SalmonFeeding 知识工程组',
+    tags: ['标准', '法规', '认证', 'ASC', 'BAP', 'GlobalGAP', '绿色食品'],
+    content: `# 三文鱼养殖全球标准与法规汇编
+
+## 第一章：国际认证体系
+
+### 1.1 三大国际认证对比
+
+| 维度 | ASC | BAP | GlobalG.A.P. |
+|------|-----|-----|-------------|
+| 管理机构 | ASC (WWF+IDH) | GAA (全球水产联盟) | GlobalG.A.P. c/o FAO |
+| 关注焦点 | 环境+社会 | 全产业链 | 食品安全+追溯 |
+| 审核方式 | 第三方年度审核 | 第三方+飞行检查 | 第三方年度审核 |
+| 饲料要求 | 鱼粉鱼油可追溯 | 饲料厂需 BAP 认证 | 符合法规即可 |
+| 鱼类福利 | 有明确标准 | 有明确标准 | 基础要求 |
+| 适用场景 | 出口欧美市场 | 北美市场 | 欧洲零售市场 |
+
+### 1.2 ASC 三文鱼标准核心要求
+
+| 指标 | ASC 标准 |
+|------|---------|
+| 最大养殖密度 | 海水网箱≤25 kg/m³ |
+| FCR (饲料系数) | ≤1.3 (海水网箱) |
+| 鱼粉效率比 (FFERm) | ≤1.35 |
+| 抗生素使用 | 治疗用, 不能用预防用 |
+| 鱼类逃脱 | ≤300条/生产周期 (需报告) |
+| 底泥影响 | 网箱下底泥 Zn≤标准值 |
+| 社会责任 | 符合 ILO 核心劳工标准 |
+| 海虱数量 | 平均<0.5 雌虫/鱼 |
+
+## 第二章：中国标准
+
+### 2.1 现行有效标准
+
+| 标准编号 | 名称 | 主要内容 |
+|---------|------|---------|
+| GB/T 22213-2008 | 水产养殖术语 | 术语定义 |
+| NY/T 755-2003 | 绿色食品 渔药使用准则 | 禁用药清单+休药期 |
+| NY 5071-2002 | 无公害食品 渔用药物使用准则 | 药物使用规范 |
+| NY 5072-2002 | 无公害食品 渔用配合饲料安全限量 | 饲料卫生指标 |
+| DB63/T 1042-2011 | 虹鳟商品鱼养殖技术规范 | 青海标准 |
+| SC/T 1030.1-1999 | 虹鳟养殖技术规范 亲鱼 | 行业标准 |
+| SC/T 1030.2-1999 | 虹鳟养殖技术规范 亲鱼培育 | — |
+| GB 11607-1989 | 渔业水质标准 | 水质基本要求 |
+
+### 2.2 绿色食品认证要求
+
+| 项目 | 要求 |
+|------|------|
+| 环境 | 产地环境符合 NY/T 391 |
+| 投入品 | 渔药/饲料符合绿色食品准则 |
+| 休药期 | ≥500度日 (水温×天数) |
+| 可追溯 | 养殖全过程记录 |
+| 检测 | 第三方检测 每年至少1次 |
+
+## 第三章：饲料法规
+
+### 3.1 饲料安全关键指标
+
+| 检测项 | 限量 | 依据 |
+|--------|------|------|
+| 黄曲霉毒素 B1 | ≤10 μg/kg | NY 5072 |
+| 总砷 | ≤3 mg/kg | NY 5072 |
+| 铅 | ≤5 mg/kg | NY 5072 |
+| 汞 | ≤0.5 mg/kg | NY 5072 |
+| 镉 | ≤0.5 mg/kg | NY 5072 |
+| 沙门氏菌 | 不得检出/25g | NY 5072 |
+| 三聚氰胺 | 不得检出 | 农业部公告 |
+
+### 3.2 进口饲料登记
+
+境外饲料添加剂和预混料需通过农业农村部进口登记:
+- 提交: 生产工艺、质量标准、安全评价报告
+- 审查周期: 6-12 个月
+- 有效期: 5年 (需续展)
+
+## 第四章：出口合规
+
+### 4.1 主要出口市场要求
+
+| 市场 | 核心要求 | 认证 |
+|------|---------|------|
+| 欧盟 | 出口国列入 EU 清单 + HACCP | EU 批号 |
+| 美国 | FSMA + HACCP + 水产 HACCP | FDA 注册 |
+| 日本 | 肯定列表制度 (残留限量) | 出口备案 |
+| 韩国 | 进口水产品检验法 | 卫生证书 |
+
+### 4.2 出口检测项目
+
+| 检测类别 | 项目数 | 常见不合格项 |
+|---------|--------|------------|
+| 兽药残留 | 30-50项 | 磺胺类、氟苯尼考超休药期 |
+| 重金属 | 5项 | — |
+| 微生物 | 5-7项 | 菌落总数 |
+| 污染物 | 3-5项 | — |
+`,
+  },
 ];
 
 // ============ 爬虫函数 ============
@@ -439,6 +986,7 @@ async function crawlAndIngest(sourceName, pageInfo, sourceType = 'web_article') 
       sourceName,
       sourceType,
       sourceUrl: pageInfo.url,
+      headers: { 'User-Agent': _nextUA() },
     });
 
     const chunkTexts = result.chunks.map(c => c.text);
@@ -489,7 +1037,7 @@ async function searchSemanticScholar(query, maxResults = 5) {
     const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=${maxResults}&fields=title,abstract,year,authors,journal,url`;
     const resp = await fetch(url, {
       headers: { 'User-Agent': 'SalmonFeedingAI/2.0' },
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(30000),
     });
 
     if (resp.status === 429) {
@@ -576,11 +1124,13 @@ async function runAllCrawlers(options = {}) {
           totalDocs++;
           totalChars += result.totalChars;
         }
-        // 礼貌延迟
-        await new Promise(r => setTimeout(r, 2000));
+        // 礼貌延迟 (增加到3秒 + 跨域额外等待)
+        await new Promise(r => setTimeout(r, 3000));
       }
+      // 跨源额外延迟
+      await new Promise(r => setTimeout(r, 2000));
+      console.log('');
     }
-    console.log('');
   }
 
   // 2. 内置文档
@@ -598,26 +1148,38 @@ async function runAllCrawlers(options = {}) {
 
   // 3. 学术论文搜索
   if (searchPapers) {
-    console.log('🎓 [3/4] Semantic Scholar 学术论文...');
-    for (const query of SOURCES.semanticscholar.queries) {
-      console.log(`  🔍 "${query.replace(/\+/g, ' ')}"`);
-      const papers = await searchSemanticScholar(query, 3);
-      for (const paper of papers) {
-        console.log(`    📄 ${paper.title.substring(0, 60)}...`);
-        const result = await ingestPaper(paper);
-        if (result) {
-          totalDocs++;
-          totalChars += result.totalChars;
+    console.log('🎓 [3/5] Semantic Scholar 学术论文...');
+    if (SOURCES.semanticscholar && SOURCES.semanticscholar.queries) {
+      for (const query of SOURCES.semanticscholar.queries) {
+        console.log(`  🔍 "${query.replace(/\+/g, ' ')}"`);
+        const papers = await searchSemanticScholar(query, 3);
+        for (const paper of papers) {
+          console.log(`    📄 ${paper.title.substring(0, 60)}...`);
+          const result = await ingestPaper(paper);
+          if (result) {
+            totalDocs++;
+            totalChars += result.totalChars;
+          }
+          await new Promise(r => setTimeout(r, 1500));
         }
-        await new Promise(r => setTimeout(r, 1500)); // API 频率限制
+        await new Promise(r => setTimeout(r, 2000));
       }
-      await new Promise(r => setTimeout(r, 2000));
+    }
+    console.log('');
+  }
+
+  // 3.5. 专业知识库文件
+  if (ingestBuiltin) {
+    console.log('📖 [3.5/5] 专业知识库文档...');
+    const kbResults = await ingestKnowledgeFiles();
+    for (const r of kbResults) {
+      if (r) { totalDocs++; totalChars += r.totalChars; }
     }
     console.log('');
   }
 
   // 4. 导入 RSS 新闻
-  console.log('📰 [4/4] 导入 RSS 新闻文章...');
+  console.log('📰 [4/5] 导入 RSS 新闻文章...');
   const newsImported = await importNewsArticles();
   totalDocs += newsImported.count;
   totalChars += newsImported.chars;
@@ -678,6 +1240,45 @@ async function importNewsArticles() {
 
   console.log(`  ✅ 导入 ${count} 篇新闻, ${(totalChars/1000).toFixed(0)}K 字`);
   return { count, chars: totalChars };
+}
+
+// ============ 知识库文件导入 ============
+
+async function ingestKnowledgeFiles() {
+  const knowledgeDir = require('path').join(__dirname, '..', 'data', 'knowledge');
+  if (!require('fs').existsSync(knowledgeDir)) {
+    console.log('📭 data/knowledge/ 目录不存在');
+    return [];
+  }
+
+  const files = require('fs').readdirSync(knowledgeDir).filter(f => f.endsWith('.md'));
+  console.log(`📝 发现 ${files.length} 个专业知识文档`);
+
+  const results = [];
+  for (const file of files) {
+    const filePath = require('path').join(knowledgeDir, file);
+    const content = require('fs').readFileSync(filePath, 'utf-8');
+    const title = content.split('\n')[0].replace(/^#+\s*/, '').trim();
+
+    try {
+      const { ingestText } = require('./doc-pipeline');
+      const result = await ingestText(content, {
+        title,
+        author: 'SalmonFeeding 知识工程组',
+        sourceType: 'manual',
+        sourceName: 'SalmonFeeding 专业知识库',
+        tags: ['知识库', '养殖', file.replace('.md', '')],
+      });
+      const chunkTexts = result.chunks.map(c => c.text);
+      const embeddings = await embedBatch(chunkTexts);
+      const docResult = await vstore.addDocument(result.metadata, result.chunks, embeddings);
+      console.log(`  ✅ ${title}: ${docResult.chunkCount}块, ${docResult.totalChars}字`);
+      results.push(docResult);
+    } catch (e) {
+      console.log(`  ⚠️ ${title}: ${e.message}`);
+    }
+  }
+  return results;
 }
 
 // ============ PDF 批量导入 ============
@@ -760,6 +1361,7 @@ module.exports = {
   searchSemanticScholar,
   ingestPaper,
   ingestBuiltinDoc,
+  ingestKnowledgeFiles,
   importNewsArticles,
   importPDFs,
   getModelDownloadScript,

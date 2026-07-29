@@ -1,34 +1,155 @@
 // ================================================================
-// rag.js v5 — RAG 检索增强生成模块
-// 使用新的 vector-store 混合检索 (BM25 + 向量 + RRF)
-// Claude API 智能回答 + 本地回退
+// rag.js v6 — 纯知识库检索模块 (无 LLM 依赖)
+//
+// 功能:
+// - 领域检测: 三文鱼养殖外的问题直接拒绝
+// - 知识库检索: BM25 + 向量混合检索 (vector-store.js)
+// - 相关性过滤: 检索分数太低 → 拒绝
+// - 结构化回答: 检索结果原文整理输出
 // ================================================================
 
 const fs = require('fs');
 const path = require('path');
 const vstore = require('./vector-store');
 
-// 代理配置: ECS 国内访问不了 Anthropic API，通过 Render 中转
-const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
+// ============ 领域检测 ============
 
-// DeepSeek 配置 (国内直连，OpenAI 兼容格式)
-const LLM_PROVIDER = process.env.LLM_PROVIDER || 'deepseek'; // 'anthropic' | 'deepseek'
-const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
-const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
-const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
-
-// ============ 搜索接口 (统一) ============
+const DOMAIN_PATTERNS = [
+  // 养殖对象
+  /三文鱼|大西洋鲑|虹鳟|鲑鱼|鳟鱼|salmon|trout|oncorhynchus|salmo/i,
+  // 投喂/饲料/营养
+  /投喂|投饲|饲料|饵料|摄食|feeding|feed|diet|nutrition|FCR|饲料系数|feeding rate/i,
+  // 水质
+  /水质|溶氧|DO|氨氮|亚硝酸|pH值?|碱度|水温|总悬浮物|TSS|water quality|dissolved oxygen|ammonia|nitrite/i,
+  // 疾病/健康
+  /疾病|弧菌|IPN|IHN|ISA|海虱|水霉|细菌|病毒|疫苗|免疫|disease|pathogen|vaccine|health|welfare/i,
+  // 养殖模式/管理
+  /养殖|密度|放养|RAS|循环水|网箱|鱼池|流水池|aquaculture|farming|cage|recirculating|stocking/i,
+  // 生长/生理
+  /生长|体重|体长|SGR|TGC|growth|weight|biomass|metabolism/i,
+  // 经济/市场
+  /市场|价格|成本|经济|盈亏|market|price|economic|cost|profit/i,
+  // 标准/法规
+  /标准|法规|认证|ASC|BAP|GlobalGAP|绿色食品|standard|regulation|certification/i,
+  // 收获/加工/品质
+  /收获|捕捞|加工|屠宰|品质|HACCP|harvest|slaughter|processing|quality/i,
+  // 繁殖/育苗
+  /繁殖|育苗|鱼苗|鱼卵|降海|smolt|银化|breeding|hatchery|juvenile/i,
+  // 环境/可持续
+  /环境|可持续|排放|氮磷|environment|sustainable|effluent|waste/i,
+  // 鱼类通用
+  /鱼体重|投饲率|饲料系数|日增重|特定生长率|肥满度|肝体比/i,
+];
 
 /**
- * 混合检索: BM25 + 向量
- * @param {string} query
- * @param {number} topK
+ * 判断问题是否在三文鱼养殖领域内
  */
+function isInDomain(query) {
+  return DOMAIN_PATTERNS.some(p => p.test(query));
+}
+
+// ============ 回答构建 (无 LLM) ============
+
+/**
+ * 从知识库检索结果构建结构化回答
+ * 不做 LLM 生成，直接整理原文摘要
+ */
+function _buildKBAnswer(query, results, sources) {
+  if (!results || results.length === 0) {
+    return _outOfScopeAnswer('no_match');
+  }
+
+  let answer = '';
+
+  // 解析用户意图，优先提取最相关的信息
+  const q = query.toLowerCase();
+
+  // 提取关键数值参数
+  const allText = results.map(r => r.text || '').join('\n');
+  const extractedParams = _extractKeyParams(allText);
+  if (extractedParams.length > 0) {
+    answer += '📊 **关键数据**\n';
+    for (const p of extractedParams.slice(0, 6)) {
+      answer += `- ${p}\n`;
+    }
+    answer += '\n';
+  }
+
+  // 展示搜索结果摘要
+  answer += '📚 **知识库检索结果**\n\n';
+  for (let i = 0; i < Math.min(results.length, 5); i++) {
+    const r = results[i];
+    const scorePct = Math.round(r.score * 100);
+    const sourceTag = r.docType === 'web_article' ? '🌐' :
+                      r.docType === 'paper' ? '📄' :
+                      r.docType === 'manual' ? '📖' : '📌';
+    answer += `**[来源:${i + 1}]** ${sourceTag} *${r.docTitle || '未知来源'}* `;
+    if (r.sectionTitle) answer += `> ${r.sectionTitle} `;
+    answer += `(相关度: ${scorePct}%)\n`;
+    answer += `> ${r.text.substring(0, 400).replace(/\n/g, '\n> ')}\n\n`;
+  }
+
+  if (results.length > 5) {
+    answer += `_…还有 ${results.length - 5} 条相关结果未展示_\n\n`;
+  }
+
+  answer += '---\n💡 **提示**: 以上内容全部来自本地知识库，如需更详细的信息，可以尝试更具体的关键词搜索。';
+
+  return answer;
+}
+
+/**
+ * 提取文本中的关键数值参数
+ */
+function _extractKeyParams(text) {
+  const params = [];
+  const seen = new Set();
+
+  // 水温 + 投饲率
+  const tempFeedRe = /(\d{1,2})\s*[℃C°度]\s*[^。\n]{0,30}?(\d+\.?\d*)\s*[%％]/g;
+  for (const m of text.matchAll(tempFeedRe)) {
+    const key = `水温 ${m[1]}℃ → 投饲率 ${m[2]}%`;
+    if (!seen.has(key)) { seen.add(key); params.push(key); }
+  }
+
+  // 溶氧
+  const doRe = /溶?解?氧.{0,5}?(\d+\.?\d*)\s*(?:mg\/L|毫克\/升)/gi;
+  for (const m of text.matchAll(doRe)) {
+    const key = `溶氧: ${m[1]} mg/L`;
+    if (!seen.has(key)) { seen.add(key); params.push(key); }
+  }
+
+  // FCR
+  const fcrRe = /FCR.{0,10}?(\d+\.?\d*)/gi;
+  for (const m of text.matchAll(fcrRe)) {
+    const key = `FCR: ${m[1]}`;
+    if (!seen.has(key)) { seen.add(key); params.push(key); }
+  }
+
+  // 投饲率
+  const frRe = /投饲率.{0,10}?(\d+\.?\d*)\s*[%％]/g;
+  for (const m of text.matchAll(frRe)) {
+    const key = `投饲率: ${m[1]}%`;
+    if (!seen.has(key)) { seen.add(key); params.push(key); }
+  }
+
+  // 养殖密度
+  const densityRe = /密度.{0,10}?(\d+\.?\d*)\s*(?:kg\/m³|公斤\/立方)/gi;
+  for (const m of text.matchAll(densityRe)) {
+    const key = `养殖密度: ${m[1]} kg/m³`;
+    if (!seen.has(key)) { seen.add(key); params.push(key); }
+  }
+
+  return params;
+}
+
+// ============ 搜索接口 ============
+
 async function search(query, topK = 10) {
   return await vstore.search(query, topK);
 }
 
-// ============ 上下文构建 ============
+// ============ 上下文与来源构建 (保留) ============
 
 function _buildContext(results) {
   if (!results || results.length === 0) return '';
@@ -58,331 +179,17 @@ function _buildSources(results) {
   }));
 }
 
-// ============ Claude API 调用 ============
+// ============ 拒绝话术 ============
 
-async function _callClaude(query, context, apiKey) {
-  const Anthropic = require('@anthropic-ai/sdk');
-  const anthropic = new Anthropic({ apiKey, baseURL: ANTHROPIC_BASE_URL });
-
-  const systemPrompt = `你是三文鱼(Salmon)养殖投喂管理专家。基于提供的知识库内容回答用户问题。
-
-规则:
-1. 只使用提供的知识库内容回答, 不要编造
-2. 如果知识库中有具体数值(水温/溶氧/投饲率等), 务必引用
-3. 如有标准/论文来源, 注明出处
-4. 回答简洁专业, 分点列出关键信息
-5. 如果知识库中信息不足, 诚实说明并给出建议方向
-6. 用中文回答, 专业术语保留英文缩写`;
-
-  const msg = await anthropic.messages.create({
-    model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',
-    max_tokens: 1500,
-    system: systemPrompt,
-    messages: [{
-      role: 'user',
-      content: `知识库检索结果:\n\n${context}\n\n---\n用户问题: ${query}\n\n请基于以上知识库内容回答用户问题。`,
-    }],
-  });
-
-  const textBlock = [...msg.content].reverse().find(b => b.type === 'text');
-  if (!textBlock || !textBlock.text) throw new Error('API返回格式异常');
-  return textBlock.text;
+function _outOfScopeAnswer(reason) {
+  if (reason === 'no_match') {
+    return '📭 **未找到相关知识**\n\n知识库中暂无与您问题匹配的内容。\n\n💡 建议:\n- 尝试更具体的关键词，如"虹鳟投饲率"、"溶氧管理"\n- 换一种表述方式重新提问\n- 知识库正在持续扩充中，敬请期待';
+  }
+  // reason === 'out_of_domain' 或其他
+  return '🚫 **抱歉，这超出了我的知识范围**\n\n我是三文鱼（大西洋鲑/虹鳟）养殖领域的专业助手，只能回答以下方面的问题：\n\n- 🧮 **投喂管理**: 投饲率、饲料配方、FCR、投喂策略\n- 💧 **水质管理**: 溶氧、氨氮、pH、温度、RAS 循环水系统\n- 🩺 **疾病防控**: 常见病害诊断、治疗、疫苗、生物安全\n- 📊 **生长分析**: 生长模型、SGR、体重预测\n- 🐟 **养殖技术**: 密度、育苗、降海驯化、收获加工\n- 📈 **经济与标准**: 市场行情、成本分析、行业标准\n\n💡 请提出与三文鱼/虹鳟养殖相关的问题，我很乐意帮助！';
 }
 
-// ============ DeepSeek API 调用 (OpenAI 兼容格式) ============
-
-async function _callDeepSeekChat(messages, systemPrompt, maxTokens, apiKey) {
-  const apiMessages = [];
-  if (systemPrompt) {
-    apiMessages.push({ role: 'system', content: systemPrompt });
-  }
-  for (const m of messages) {
-    apiMessages.push({ role: m.role, content: m.content });
-  }
-
-  const resp = await fetch(`${DEEPSEEK_BASE_URL}/v1/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey || DEEPSEEK_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: DEEPSEEK_MODEL,
-      messages: apiMessages,
-      max_tokens: maxTokens,
-      temperature: 0.7,
-    }),
-    signal: AbortSignal.timeout(120000),
-  });
-
-  if (!resp.ok) {
-    const errBody = await resp.text().catch(() => '');
-    throw new Error(`${resp.status} ${errBody.substring(0, 300)}`);
-  }
-  const data = await resp.json();
-  const content = data.choices?.[0]?.message?.content || '';
-  if (!content) throw new Error('DeepSeek 返回空内容');
-  return content;
-}
-
-// ============ RAG 回答 ============
-
-/**
- * 单轮 RAG 问答 (传统模式，保留向后兼容)
- */
-async function generateAnswer(query) {
-  const results = await search(query, 8);
-
-  const sources = _buildSources(results);
-
-  if (results.length === 0) {
-    return {
-      answer: '未找到相关知识。试试搜索: 投饲率 / FCR / 溶氧 / 水温 / 密度 / 疾病',
-      sources: [],
-    };
-  }
-
-  const context = _buildContext(results);
-
-  // DeepSeek 优先 (国内可直连)
-  if (LLM_PROVIDER === 'deepseek' && DEEPSEEK_API_KEY) {
-    try {
-      const answer = await _callDeepSeekChat(
-        [{ role: 'user', content: `知识库检索结果:\n\n${context}\n\n---\n用户问题: ${query}\n\n请基于以上知识库内容回答用户问题。` }],
-        '你是三文鱼(Salmon)养殖投喂管理专家。基于提供的知识库内容回答用户问题。规则: 1. 只使用提供的知识库内容回答, 不要编造 2. 如果知识库中有具体数值(水温/溶氧/投饲率等), 务必引用 3. 如有标准/论文来源, 注明出处 4. 回答简洁专业, 分点列出关键信息 5. 如果知识库中信息不足, 诚实说明并给出建议方向 6. 用中文回答, 专业术语保留英文缩写',
-        1500,
-        DEEPSEEK_API_KEY
-      );
-      return { answer, sources };
-    } catch (e) {
-      console.error('DeepSeek API 调用失败, 回退到本地回答:', e.message);
-    }
-  }
-
-  // Anthropic (备用)
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (LLM_PROVIDER === 'anthropic' && apiKey) {
-    try {
-      const answer = await _callClaude(query, context, apiKey);
-      return { answer, sources };
-    } catch (e) {
-      console.error('Claude API 调用失败, 回退到本地回答:', e.message);
-    }
-  }
-
-  return { answer: _fallbackAnswer(query, results, sources), sources };
-}
-
-// ============ 智能对话 ============
-
-const CHAT_SYSTEM_PROMPT = `你是「鲑鱼博士」— 一位资深的三文鱼养殖技术顾问，拥有20年一线养殖和水产科研经验。
-
-## 你的角色
-- 你帮助养殖户解决三文鱼(大西洋鲑)和虹鳟养殖中的实际问题
-- 你的知识涵盖: 投喂策略、水质管理、疾病防控、饲料营养、生长模型、养殖密度、溶氧管理、经济分析
-- 你熟悉中国(DB63/NY/GB标准)和国际(FAO/Nofima/ASC)养殖标准
-
-## 回答原则
-1. **先理解再回答**: 仔细分析养殖户的问题，如果不确定具体品种或场景，先追问关键参数(水温/体重/养殖模式等)
-2. **知识库优先**: 有确切数据时必须引用(水温/投饲率/FCR等)，在文中用 [来源:N] 标注引用
-3. **可以推理**: 知识库不足时，可基于养殖学原理给出方向性建议，但必须标注"建议咨询本地技术员确认"
-4. **实用导向**: 给出可操作的具体建议，而不是泛泛而谈。如"投喂量减少15%"而非"适当减少"
-5. **风险意识**: 如果养殖户描述的情况存在严重风险(高温/缺氧/氨氮超标)，优先给出紧急处理方案
-6. **对话自然**: 像一位经验丰富的老技术员在跟养殖户聊天，专业但不生硬
-
-## 联网搜索模式
-当用户问题涉及以下内容时，联网搜索的结果会附在参考资料中:
-- 最新三文鱼市场价格、行情走势
-- 近期水产行业新闻、政策变化
-- 最新科研成果、新发布的标准
-- 天气/气候对养殖的影响
-
-## 格式要求
-- 使用 Markdown 格式回复
-- 关键数据用 **加粗** 突出
-- 操作步骤用编号列表
-- 如有多个方案，用表格对比
-- **重要: 引用了知识库或搜索结果中的数据时，必须在文中标注 [来源:N]，让养殖户知道这个数据从哪来的**
-- 结尾可以追问一句，引导养殖户提供更多信息
-
-## 禁止
-- 不要编造论文数据和专利号
-- 不要推荐禁用渔药(孔雀石绿/硝基呋喃/氯霉素)
-- 不要在不确定时给出绝对化的结论`;
-
-// ---- 联网搜索 ----
-async function searchWeb(query) {
-  const results = [];
-
-  try {
-    const q = encodeURIComponent(query + ' 三文鱼养殖 salmon');
-    const resp = await fetch(`https://html.duckduckgo.com/html/?q=${q}`, {
-      headers: { 'User-Agent': 'SalmonFeedingAI/1.0' },
-      signal: AbortSignal.timeout(4000),
-    });
-    if (resp.ok) {
-      const html = await resp.text();
-      const snippetRe = /class="result__snippet"[^>]*>(.*?)<\/a>/gs;
-      const titleRe = /class="result__title"[^>]*>.*?<a[^>]*>(.*?)<\/a>/gs;
-      const linkRe = /class="result__url"[^>]*>(.*?)<\/a>/gs;
-      const snippets = [...html.matchAll(snippetRe)].map(m => m[1].replace(/<[^>]+>/g, '').trim());
-      const titles = [...html.matchAll(titleRe)].map(m => m[1].replace(/<[^>]+>/g, '').trim());
-      const links = [...html.matchAll(linkRe)].map(m => m[1].replace(/<[^>]+>/g, '').trim());
-      for (let i = 0; i < Math.min(5, snippets.length); i++) {
-        if (snippets[i] && snippets[i].length > 30) {
-          results.push({
-            title: titles[i] || '网络结果',
-            text: snippets[i].substring(0, 500),
-            score: (5 - i) / 5,
-            docTitle: titles[i] || '网络结果',
-            docType: 'web',
-            docUrl: links[i] || '',
-            sourceName: '🌐 网络搜索',
-            sectionTitle: '',
-            tags: ['网络搜索'],
-          });
-        }
-      }
-    }
-  } catch(e) {
-    console.log('联网搜索: DuckDuckGo 不可用 (' + e.message + ')');
-  }
-
-  // 备用 Bing
-  if (results.length === 0) {
-    try {
-      const q = encodeURIComponent(query + ' salmon aquaculture');
-      const resp = await fetch(`https://www.bing.com/search?q=${q}`, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-        signal: AbortSignal.timeout(4000),
-      });
-      if (resp.ok) {
-        const html = await resp.text();
-        const capRe = /<p[^>]*class="[^"]*b_lineclamp[^"]*"[^>]*>(.*?)<\/p>/gs;
-        const capMatches = [...html.matchAll(capRe)];
-        for (let i = 0; i < Math.min(3, capMatches.length); i++) {
-          const text = capMatches[i][1].replace(/<[^>]+>/g, '').trim();
-          if (text.length > 30 && results.length < 6) {
-            results.push({
-              title: '网络结果 ' + (i + 1),
-              text: text.substring(0, 400),
-              score: (3 - i) / 5,
-              docTitle: '网络结果 ' + (i + 1),
-              docType: 'web',
-              docUrl: '',
-              sourceName: '🌐 网络搜索',
-              sectionTitle: '',
-              tags: ['网络搜索'],
-            });
-          }
-        }
-      }
-    } catch(e) {
-      console.log('联网搜索: Bing 也不可用 (' + e.message + ')');
-    }
-  }
-
-  return results.slice(0, 8);
-}
-
-// ---- 智能对话 (多轮记忆 + 可选联网搜索) ----
-async function chat(query, history = [], options = {}) {
-  const { searchWeb: enableWebSearch = false } = options;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-
-  // 1. 混合检索知识库
-  let localResults = [];
-  try {
-    localResults = await vstore.search(query, 8);
-  } catch(e) {
-    console.warn('向量检索失败:', e.message);
-  }
-
-  // 2. 联网搜索
-  let webResults = [];
-  if (enableWebSearch) {
-    try {
-      webResults = await searchWeb(query);
-    } catch(e) { console.log('联网搜索失败:', e.message); }
-  }
-
-  // 3. 合并结果
-  const allResults = [...localResults, ...webResults];
-
-  // 4. 构建来源
-  const sources = _buildSources(allResults);
-
-  // 5. 构建上下文
-  const context = allResults.length > 0
-    ? allResults.map((r, i) =>
-        `[来源:${i + 1} | ${r.docTitle || r.title || ''} | ${r.sectionTitle || ''} | 类型:${r.docType || 'unknown'}${r.sourceName ? ' | ' + r.sourceName : ''}]\n${(r.text || '').substring(0, 1000)}`
-      ).join('\n\n---\n\n')
-    : '';
-
-  const searchModeNote = enableWebSearch
-    ? '\n（联网搜索已启用，以上参考资料包含实时网络搜索结果）'
-    : '';
-
-  // 6. 无 API Key 时回退
-  if (LLM_PROVIDER === 'deepseek' && !DEEPSEEK_API_KEY) {
-    const result = await generateAnswer(query);
-    return result;
-  }
-
-  // 7. 构建 messages
-  const messages = [];
-  for (const turn of history.slice(-10)) {
-    if (turn.role === 'user') {
-      messages.push({ role: 'user', content: turn.content });
-    } else if (turn.role === 'assistant') {
-      messages.push({ role: 'assistant', content: turn.content });
-    }
-  }
-
-  messages.push({
-    role: 'user',
-    content: `【参考资料 — 请在回答中用 [来源:N] 标注引用】\n${context || '（暂无匹配的知识库内容，请基于养殖学常识回答）'}\n${searchModeNote}\n---\n【养殖户的问题】\n${query}`,
-  });
-
-  // DeepSeek (国内直连)
-  if (LLM_PROVIDER === 'deepseek' && DEEPSEEK_API_KEY) {
-    try {
-      const answer = await _callDeepSeekChat(messages, CHAT_SYSTEM_PROMPT, 2500, DEEPSEEK_API_KEY);
-      return { answer, sources, webSearchUsed: enableWebSearch };
-    } catch (e) {
-      console.error('DeepSeek Chat API 调用失败:', e.message);
-      return await generateAnswer(query);
-    }
-  }
-
-  // Anthropic (备用)
-  if (LLM_PROVIDER === 'anthropic') {
-    try {
-      const Anthropic = require('@anthropic-ai/sdk');
-      const anthropic = new Anthropic({ apiKey, baseURL: ANTHROPIC_BASE_URL });
-
-      const msg = await anthropic.messages.create({
-        model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',
-        max_tokens: 2500,
-        system: CHAT_SYSTEM_PROMPT,
-        messages,
-      });
-
-      const textBlock = [...msg.content].reverse().find(b => b.type === 'text');
-      if (!textBlock || !textBlock.text) throw new Error('API返回格式异常');
-
-      return { answer: textBlock.text, sources, webSearchUsed: enableWebSearch };
-    } catch (e) {
-      console.error('Claude Chat API 调用失败:', e.message);
-      return await generateAnswer(query);
-    }
-  }
-
-  // Fallback
-  return await generateAnswer(query);
-}
-
-// ============ 本地回退回答 ============
+// ============ 本地回退 (保留原有逻辑) ============
 
 function _fallbackAnswer(query, results, sources) {
   const qLower = query.toLowerCase();
@@ -412,4 +219,87 @@ function _fallbackAnswer(query, results, sources) {
   return answer;
 }
 
-module.exports = { search, generateAnswer, chat };
+// ============ RAG 单轮回答 ============
+
+async function generateAnswer(query) {
+  // 1. 领域检测
+  if (!isInDomain(query)) {
+    return {
+      answer: _outOfScopeAnswer('out_of_domain'),
+      sources: [],
+      outOfDomain: true,
+    };
+  }
+
+  // 2. 知识库混合检索
+  const results = await search(query, 8);
+
+  // 3. 构建来源
+  const sources = _buildSources(results);
+
+  // 4. 相关性过滤: 最高分 < 0.01 或无结果 → 无匹配
+  // 注: 当 BM25 索引为空时, RRF 纯向量最高分约 0.016 (1/61)
+  if (!results || results.length === 0 || results[0].score < 0.01) {
+    return {
+      answer: _outOfScopeAnswer('no_match'),
+      sources: [],
+      noMatch: true,
+    };
+  }
+
+  // 5. 构建纯 KB 回答 (不调用任何 LLM)
+  const answer = _buildKBAnswer(query, results, sources);
+
+  // 6. 如果构建的回答太短（极端情况），用 fallback 补充
+  if (!answer || answer.length < 20) {
+    const fb = _fallbackAnswer(query, results, sources);
+    return { answer: fb, sources };
+  }
+
+  return { answer, sources };
+}
+
+// ============ 智能对话 (多轮 + KB only) ============
+
+async function chat(query, history = [], options = {}) {
+  // 1. 领域检测
+  if (!isInDomain(query)) {
+    return {
+      answer: _outOfScopeAnswer('out_of_domain'),
+      sources: [],
+      outOfDomain: true,
+    };
+  }
+
+  // 2. 知识库混合检索
+  let localResults = [];
+  try {
+    localResults = await vstore.search(query, 8);
+  } catch (e) {
+    console.warn('向量检索失败:', e.message);
+  }
+
+  // 3. 构建来源
+  const sources = _buildSources(localResults);
+
+  // 4. 相关性过滤: 最高分 < 0.01 -> 无匹配 (BM25 为空时 RRF 纯向量 ~0.016)
+  if (!localResults || localResults.length === 0 || localResults[0].score < 0.01) {
+    return {
+      answer: _outOfScopeAnswer('no_match'),
+      sources: [],
+      noMatch: true,
+    };
+  }
+
+  // 5. 构建纯 KB 回答
+  const answer = _buildKBAnswer(query, localResults, sources);
+
+  if (!answer || answer.length < 20) {
+    const fb = _fallbackAnswer(query, localResults, sources);
+    return { answer: fb, sources };
+  }
+
+  return { answer, sources };
+}
+
+module.exports = { search, generateAnswer, chat, isInDomain };

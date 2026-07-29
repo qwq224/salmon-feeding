@@ -325,7 +325,11 @@ app.post('/api/webhook/wecom/simple', async (req, res) => {
   if (!query) return res.json({ reply: '请发送查询内容，如: 水温15度体重200g的投喂量？' });
   try {
     const result = await chat(query);
-    res.json({ reply: result.answer.replace(/\*\*/g, ''), sources: result.sources.map(s => s.title) });
+    let reply = result.answer.replace(/\*\*/g, '');
+    if (result.outOfDomain) {
+      reply = '抱歉，我只专注于三文鱼养殖领域的问题解答。您有什么养殖技术相关的问题吗？';
+    }
+    res.json({ reply, sources: (result.sources || []).map(s => s.title) });
   } catch(e) {
     res.json({ reply: '抱歉，处理出错了: ' + e.message });
   }
@@ -364,6 +368,15 @@ app.post('/api/webhook/feishu/simple', async (req, res) => {
   if (!query) return res.json({ msg: '请发送查询内容' });
   try {
     const result = await chat(query);
+    if (result.outOfDomain) {
+      return res.json({
+        msg_type: 'interactive',
+        card: {
+          header: { title: { tag: 'plain_text', content: '🐟 鲑鱼博士' }, template: 'blue' },
+          elements: [{ tag: 'div', text: { tag: 'lark_md', content: '抱歉，我只能解答三文鱼养殖相关问题。有什么养殖技术问题需要帮助吗？' } }],
+        },
+      });
+    }
     const card = buildFeishuSimpleCard(result, query);
     res.json(card);
   } catch(e) {

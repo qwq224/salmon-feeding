@@ -409,11 +409,8 @@
       <div class="page" id="page-chat">
         <div class="card" style="flex:1;display:flex;flex-direction:column">
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-            <h3 style="margin-bottom:0">🤖 AI 智能助手 <span style="font-weight:400;font-size:11px;color:var(--text-dim)">— 鲑鱼博士 · 多轮对话 · Claude 驱动</span></h3>
+            <h3 style="margin-bottom:0">🤖 AI 智能助手 <span style="font-weight:400;font-size:11px;color:var(--text-dim)">— 鲑鱼博士 · 知识库检索 · 来源可溯</span></h3>
             <div style="display:flex;gap:8px;align-items:center">
-              <button class="btn-toggle" id="webSearchToggle" onclick="toggleWebSearch()" title="开启后 AI 会搜索网络获取最新信息">
-                🌐 联网搜索 <span id="webSearchBadge" class="toggle-badge off">关</span>
-              </button>
               <button class="btn-outline btn-sm" onclick="clearChat()" title="清空对话历史">🗑️ 清空对话</button>
             </div>
           </div>
@@ -429,12 +426,13 @@
             <div class="chat-msg ai">
               <div class="chat-role">🤖 鲑鱼博士</div>
               <div class="chat-content">👋 你好！我是<b>鲑鱼博士</b>，你的三文鱼养殖智能顾问。<br><br>
-              🎯 我能帮你：<br>
-              • 📐 <b>计算投喂量</b> — 告诉我水温+体重，我帮你算<br>
-              • 🔍 <b>诊断问题</b> — FCR异常/拒食/病害，一步步排查<br>
-              • 🚨 <b>应急处理</b> — 缺氧/氨氮超标/高温，给出紧急方案<br>
-              • 📚 <b>知识解答</b> — 养殖标准/饲料营养/密度管理<br>
-              • 💬 <b>多轮追问</b> — 我会记住前面的对话，可以连续深入讨论<br><br>
+              🎯 我基于知识库为你解答：<br>
+              • 📐 <b>投喂量参考</b> — 提供投饲率参考数据<br>
+              • 🔍 <b>问题诊断</b> — FCR异常/拒食/病害排查<br>
+              • 🚨 <b>应急处理</b> — 缺氧/氨氮超标应对方案<br>
+              • 📚 <b>知识检索</b> — 养殖标准/饲料营养/水质管理<br>
+              • 📖 <b>来源溯源</b> — 每一条回答都标注知识来源<br><br>
+              ⚠️ 我仅解答三文鱼（大西洋鲑/虹鳟）养殖相关问题。<br>
               👇 直接输入问题，或点击下方快捷提问开始吧！</div>
             </div>
           </div>
@@ -501,6 +499,12 @@
   </button>
   <button onclick="switchPage('chat')" class="nav-btn" data-page="chat">
     <span class="nav-icon">🤖</span><span class="nav-label">AI</span>
+  </button>
+  <button onclick="switchPage('knowledge')" class="nav-btn" data-page="knowledge">
+    <span class="nav-icon">📚</span><span class="nav-label">知识</span>
+  </button>
+  <button onclick="switchPage('settings')" class="nav-btn" data-page="settings">
+    <span class="nav-icon">⚙️</span><span class="nav-label">设置</span>
   </button>
 </div>
 

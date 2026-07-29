@@ -3,7 +3,6 @@
 // ================================================================
 let records=[], charts={}, currentPage='home';
 let chatHistory = []; // 🌟 对话历史记忆
-let webSearchEnabled = false; // 🌐 联网搜索开关
 
 // 🔧 统一排序: 始终返回 旧→新 的副本
 function sorted(){ return [...records].sort((a,b)=>a.date.localeCompare(b.date)); }
@@ -21,7 +20,7 @@ function switchPage(name) {
   // 搜索栏仅首页显示
   const topBar = document.querySelector('.top-bar');
   if(topBar) topBar.style.display = (name==='home') ? 'flex' : 'none';
-  if(name==='dashboard') renderDashboard();
+  if(name==='dashboard'){ renderDashboard(); setTimeout(()=>{ Object.values(charts).forEach(c=>{ try { c.resize(); } catch(e){} }); }, 350); }
   if(name==='records') renderRecords();
   if(name==='home') renderHome();
   if(name==='knowledge') refreshKnowledge();
@@ -1128,22 +1127,6 @@ async function ingestDocument() {
 // ============ 🌟 AI 智能对话 ============
 
 // 🌐 联网搜索开关
-function toggleWebSearch() {
-  webSearchEnabled = !webSearchEnabled;
-  const badge = document.getElementById('webSearchBadge');
-  const btn = document.getElementById('webSearchToggle');
-  if (webSearchEnabled) {
-    badge.textContent = '开';
-    badge.className = 'toggle-badge on';
-    btn.classList.add('active');
-    showToast('🌐 联网搜索已开启 — AI 将搜索最新信息', 'ok');
-  } else {
-    badge.textContent = '关';
-    badge.className = 'toggle-badge off';
-    btn.classList.remove('active');
-  }
-}
-
 // 简易 Markdown → HTML 渲染
 function renderMarkdown(text) {
   // 预处理 [来源:N] 标记为可点击的 sup 标签
@@ -1167,12 +1150,11 @@ function renderMarkdown(text) {
 }
 
 // 构建可展开的来源卡片 (增强版)
-function _buildSourceCards(sources, msgId, webSearchUsed) {
+function _buildSourceCards(sources, msgId) {
   if (!sources || sources.length === 0) return '';
-  const webLabel = webSearchUsed ? ' · 🌐 含网络搜索结果' : '';
   let html = `<div class="source-section">
     <div class="source-header" onclick="this.parentElement.classList.toggle('expanded')">
-      <span>📚 引用来源 (${sources.length}条)${webLabel}</span>
+      <span>📚 引用来源 (${sources.length}条)</span>
       <span class="source-expand-icon">▼</span>
     </div>
     <div class="source-list" id="sources-${msgId}">`;
@@ -1226,10 +1208,9 @@ function scrollToSource(id) {
 function _showLoading() {
   const box = document.getElementById('chatBox');
   const loadId = '_load_' + Date.now();
-  const searchNote = webSearchEnabled ? '<span style="font-size:10px;color:var(--gold)"> 🌐 正在搜索网络...</span>' : '';
   box.innerHTML += `<div class="chat-msg ai" id="${loadId}">
-    <div class="chat-role">🤖 鲑鱼博士${searchNote}</div>
-    <div class="chat-content loading-dots">正在思考<span>.</span><span>.</span><span>.</span></div>
+    <div class="chat-role">🤖 鲑鱼博士</div>
+    <div class="chat-content loading-dots">正在检索知识库<span>.</span><span>.</span><span>.</span></div>
   </div>`;
   box.scrollTop = box.scrollHeight;
   return loadId;
@@ -1240,11 +1221,10 @@ function askAI() {
   if (!q) return;
 
   const box = document.getElementById('chatBox');
-  const searchLabel = webSearchEnabled ? ' <span style="font-size:10px;opacity:.6">🌐 联网</span>' : '';
 
   // 添加用户消息
   box.innerHTML += `<div class="chat-msg user">
-    <div class="chat-content">${q.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}${searchLabel}</div>
+    <div class="chat-content">${q.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
   </div>`;
   chatHistory.push({ role: 'user', content: q });
   document.getElementById('chatInput').value = '';
@@ -1260,16 +1240,39 @@ function askAI() {
     body: JSON.stringify({
       query: q,
       history: chatHistory.slice(0, -1),
-      searchWeb: webSearchEnabled,
     }),
   }).then(r => r.json()).then(data => {
     const el = document.getElementById(loadId);
     const msgId = loadId.replace('_load_', 'msg_');
+
+    // 领域外拒绝
+    if (data.outOfDomain) {
+      if (el) {
+        el.innerHTML = `<div class="chat-role">🤖 鲑鱼博士</div>
+          <div class="chat-content markdown-body" style="border-left:3px solid var(--gold,#e6a817);padding-left:12px">${renderMarkdown(data.answer)}</div>`;
+      }
+      chatHistory.push({ role: 'assistant', content: data.answer });
+      if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
+      box.scrollTop = box.scrollHeight;
+      return;
+    }
+
+    // 知识库无匹配
+    if (data.noMatch) {
+      if (el) {
+        el.innerHTML = `<div class="chat-role">🤖 鲑鱼博士</div>
+          <div class="chat-content markdown-body" style="opacity:.85">${renderMarkdown(data.answer)}</div>`;
+      }
+      chatHistory.push({ role: 'assistant', content: data.answer });
+      if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
+      box.scrollTop = box.scrollHeight;
+      return;
+    }
+
     const rendered = renderMarkdown(data.answer);
-    const sourcesHtml = _buildSourceCards(data.sources, msgId, data.webSearchUsed);
+    const sourcesHtml = _buildSourceCards(data.sources, msgId);
 
     if (el) {
-      // 如果回答中有 [来源:N] 引用，替换为可点击标记 (由 renderMarkdown 处理)
       el.innerHTML = `<div class="chat-role">🤖 鲑鱼博士</div>
         <div class="chat-content markdown-body">${rendered}</div>
         ${sourcesHtml}`;
@@ -1277,32 +1280,13 @@ function askAI() {
     chatHistory.push({ role: 'assistant', content: data.answer });
     if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
 
-    // 滚动到底部（先滚动到 AI 消息顶部让用户看到来源按钮）
     box.scrollTop = box.scrollHeight;
   }).catch((err) => {
     const el = document.getElementById(loadId);
     if (el) {
-      // 回退
-      fetch('/api/rag', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q }),
-      }).then(r => r.json()).then(data => {
-        const sources = (data.sources || []).map((s, i) => ({
-          id: i + 1, title: s.title, relevance: s.relevance || 3,
-          snippet: '', source: '知识库', chapter: s.chapter, link: '',
-        }));
-        el.innerHTML = `<div class="chat-role">🤖 鲑鱼博士 (离线模式)</div>
-          <div class="chat-content markdown-body">${renderMarkdown(data.answer)}</div>
-          ${_buildSourceCards(sources, 'fb_' + Date.now(), false)}`;
-        chatHistory.push({ role: 'assistant', content: data.answer });
-        if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
-        box.scrollTop = box.scrollHeight;
-      }).catch(() => {
-        el.innerHTML = `<div class="chat-role">🤖 鲑鱼博士</div>
-          <div class="chat-content">😅 抱歉，网络连接出现问题。<br><br>
-          💡 请检查服务器是否在运行: <code>npm start</code></div>`;
-      });
+      el.innerHTML = `<div class="chat-role">🤖 鲑鱼博士</div>
+        <div class="chat-content">😅 抱歉，网络连接出现问题。<br><br>
+        💡 请检查服务器是否在运行: <code>npm start</code></div>`;
     }
   });
 }
@@ -1361,6 +1345,7 @@ async function init(){
 }
 
 window.addEventListener('load',init);
-window.addEventListener('resize',()=>{Object.values(charts).forEach(c=>c.resize())});
+window.addEventListener('resize',()=>{Object.values(charts).forEach(c=>{try{c.resize()}catch(e){}})});
+window.addEventListener('orientationchange',()=>{setTimeout(()=>{Object.values(charts).forEach(c=>{try{c.resize()}catch(e){}})},200)});
 // Ctrl+K global search shortcut
 window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();document.getElementById('globalSearch').focus();}});

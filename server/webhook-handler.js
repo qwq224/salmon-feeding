@@ -56,10 +56,15 @@ async function processFeishuReply(userId, msgId, text) {
   }
 
   // 构建回复文本 (去掉来源标记和参考列表，IM 场景不需要)
-  let replyText = result.answer
-    .replace(/\*\*/g, '**')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/\s*\[来源:\d+\]/g, '');   // 去掉 [来源:N] 标记
+  let replyText;
+  if (result.outOfDomain) {
+    replyText = '抱歉，我只能解答三文鱼养殖相关问题。有什么养殖技术问题需要帮助吗？';
+  } else {
+    replyText = result.answer
+      .replace(/\*\*/g, '**')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/\s*\[来源:\d+\]/g, '');
+  }
   if (replyText.length > 4000) replyText = replyText.substring(0, 4000) + '\n\n...(内容较长)';
 
   // 通过飞书 API 发送回复
@@ -290,12 +295,17 @@ async function handleWecom(query, body, config = {}) {
   }
 
   // 构造回复文本 (去掉来源标记和参考列表，IM 场景不需要)
-  let replyText = truncateForIM(
-    result.answer
-      .replace(/\*\*/g, '')
-      .replace(/#{1,4}\s/g, '■ ')
-      .replace(/\s*\[来源:\d+\]/g, '')   // 去掉 [来源:N] 标记
-  );
+  let replyText;
+  if (result.outOfDomain) {
+    replyText = '抱歉，我只专注于三文鱼养殖领域。请提出养殖技术相关问题。';
+  } else {
+    replyText = truncateForIM(
+      result.answer
+        .replace(/\*\*/g, '')
+        .replace(/#{1,4}\s/g, '■ ')
+        .replace(/\s*\[来源:\d+\]/g, '')
+    );
+  }
 
   // 加密回复 (如果需要)
   if (encodingAESKey && fromUser) {

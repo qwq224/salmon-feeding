@@ -13,6 +13,20 @@
 > 格式: `YYYY-MM-DD | 类型 | 文件 | 摘要`
 > 类型: NEW / MOD / DEL / DEP (依赖) / CFG (配置)
 
+### 2026-07-29
+
+| 类型 | 文件 | 摘要 |
+|------|------|------|
+| MOD | `server/rag.js` | **重大重构**: 移除所有 LLM 调用(Claude/DeepSeek)，改为纯知识库检索驱动。新增领域检测(`isInDomain`)，非三文鱼养殖问题直接拒绝。新增 `_buildKBAnswer()` 从检索结果直接构建结构化回答 |
+| MOD | `js/app.js` | `askAI()` 新增 `outOfDomain`/`noMatch` 响应处理，移除回退到 `/api/rag` 的逻辑 |
+| MOD | `index.html` | AI 助手标题改为"知识库检索·来源可溯"，更新欢迎语 |
+| MOD | `server/server.js` | Webhook 简化端点增加领域拒绝话术 |
+| MOD | `server/webhook-handler.js` | 企微/飞书回复增加领域外拒绝处理 |
+| MOD | `server/crawler.js` | **知识库扩充**: 新增5篇内置文档(RAS系统/经济分析/苗种培育/收获加工/标准法规)、新增6组爬虫源(Nofima/FAO深度/水产养殖网/MDPI等)、修复 Semantic Scholar 查询缺失 Bug、新增 User-Agent 轮换、增加请求延迟和超时 |
+| MOD | `js/app.js` | 移除联网搜索开关相关代码(`toggleWebSearch`/`webSearchEnabled`/`searchLabel`) |
+| MOD | `index.html` | 移除联网搜索按钮 |
+| MOD | `CLAUDE.md` | 更新状态: rag.js v6 纯KB模式 + 知识库扩充完成 |
+
 ### 2026-07-28
 
 | 类型 | 文件 | 摘要 |
@@ -155,11 +169,22 @@
 
 ### 知识库
 ```
-📊 89 篇文档 · 348 块 · 21.4 万字
-📂 manual: 25篇 | web_article: 60篇 | paper: 4篇
+📊 90 篇文档 · 354 块 · 21.8 万字
+📂 manual: 26篇 | web_article: 60篇 | paper: 4篇
 🔤 BM25 索引: 11,000+ 词
 📐 Embedding: 增强型 n-gram 备用方案 (384维)
    （主方案 Transformers.js 因 Hugging Face 被墙不可用）
+🆕 新增内置文档: RAS系统/经济分析/苗种培育/收获加工/标准法规
+🆕 新增爬虫源: Nofima/水产养殖网/MDPI/Frontiers
+```
+
+### AI 助手
+```
+🔄 v6 纯知识库检索模式 (无 LLM 依赖)
+🛡️ 领域检测: 正则关键词白名单，非三文鱼养殖问题自动拒绝
+📚 回答来源: BM25+向量混合检索 → 结构化原文输出
+🔗 来源追溯: 每条回答标注 [来源:N] + 可展开卡片
+🤖 企微/飞书: 自动继承领域检测 + 拒绝话术
 ```
 
 ### 文档来源
@@ -216,29 +241,14 @@ salmon-feeding/
 
 ## 五、下次启动时要做的事
 
-### 🔴 P0 — 继续今天未完成的：Claude API 代理
-
-> **状态**: SSL ✅ | 飞书 ✅ | API 代理 ❌（当前卡点）
-> **问题**: 阿里云 ECS 在国内，api.anthropic.com 被墙
-
-**解决方案（按推荐度排序）**：
-| # | 方案 | 地址 | 说明 |
-|---|------|------|------|
-| A | 公开代理 | `claude-proxy.yinxulai.com` | 免费，CF Workers，直接可用 |
-| B | Nvidia 代理 | `aispeeds.me` | NIM→Anthropic 格式，需注册 Nvidia |
-| C | 修复 Render | `salmon-feeding.onrender.com` | 当前502，需排查 |
-
-**操作步骤**：
-1. SSH 到 ECS：`ssh root@121.40.98.11`
-2. 测试代理连通性：`curl https://claude-proxy.yinxulai.com`
-3. 改 `.env` 中 `ANTHROPIC_BASE_URL` 为代理地址
-4. `pm2 restart salmon-feeding --update-env`
-5. 在飞书给机器人发消息测试 AI 回复
+### 🔶 P1 — 知识库重建 (运行爬虫)
+> 新增了 5 篇内置文档 + 多组爬虫源，需运行 `POST /api/knowledge/crawl` 或 `node server/full-build.js` 重新构建知识库
 
 ### 🔶 P2 — 其他待办
-- Render 502 排查（可能是新代码部署失败，检查 package.json 依赖兼容性）
-- .xyz 域名 ICP 备案（长期方案，让飞书支持 HTTPS 域名）
-- 知识库扩到 100 万字
+- 知识库从 21.8 万字扩到 100 万字
+- .xyz 域名 ICP 备案（让飞书支持 HTTPS 域名）
+- Render 备用服务器恢复
+- BM25 索引修复（当前为空，纯向量检索够用）
 
 ---
 
