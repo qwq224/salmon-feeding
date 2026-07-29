@@ -12,6 +12,64 @@ const fs = require('fs');
 const path = require('path');
 const vstore = require('./vector-store');
 
+// ============ 投饲率速查表 (来源:《水产动物营养与饲料学》) ============
+
+const FEEDING_TABLE = {
+  temps: [2, 5, 8, 10, 12, 15, 18, 20],
+  weightCols: [
+    { max: 0.18,  label: '<0.18g' },
+    { max: 1.5,   label: '0.18-1.5g' },
+    { max: 5.1,   label: '1.5-5.1g' },
+    { max: 12,    label: '5.1-12g' },
+    { max: 23,    label: '12-23g' },
+    { max: 39,    label: '23-39g' },
+    { max: 62,    label: '39-62g' },
+    { max: 92,    label: '62-92g' },
+    { max: 130,   label: '92-130g' },
+    { max: 180,   label: '130-180g' },
+    { max: Infinity, label: '>180g' },
+  ],
+  // 水温 → 各体重级的投饲率(%)
+  rates: {
+     2: [2.1, 1.8, 1.4, 1.0, 1.0, 0.8, 0.7, 0.6, 0.5, 0.5, 0.4],
+     5: [2.6, 2.2, 1.8, 1.4, 1.3, 1.1, 0.9, 0.8, 0.7, 0.6, 0.5],
+     8: [3.2, 2.8, 2.2, 1.7, 1.6, 1.3, 1.1, 1.0, 0.9, 0.8, 0.7],
+    10: [3.9, 3.4, 2.6, 2.1, 2.0, 1.6, 1.4, 1.2, 1.1, 0.9, 0.8],
+    12: [4.8, 4.0, 3.2, 2.5, 2.4, 1.9, 1.6, 1.4, 1.3, 1.1, 1.0],
+    15: [5.8, 4.8, 3.9, 3.0, 2.8, 2.3, 1.9, 1.7, 1.5, 1.3, 1.3],
+    18: [7.0, 5.8, 4.8, 3.7, 3.4, 2.8, 2.2, 2.0, 1.8, 1.6, 1.5],
+    20: [7.9, 6.6, 5.5, 4.4, 4.0, 3.2, 2.5, 2.2, 2.0, 1.8, 1.7],
+  },
+};
+
+function _lookupFeedingRate(temp, weightG) {
+  // 找最接近的水温
+  const temps = FEEDING_TABLE.temps;
+  let tIdx = 0;
+  for (let i = 0; i < temps.length; i++) {
+    if (temps[i] >= temp) { tIdx = i; break; }
+    tIdx = i;
+  }
+  // 如果精确匹配或第一个/最后一个
+  if (tIdx > 0 && temps[tIdx] !== temp) {
+    // 取更近的那个
+    if (Math.abs(temps[tIdx - 1] - temp) < Math.abs(temps[tIdx] - temp)) tIdx = tIdx - 1;
+  }
+
+  // 找对应的体重列
+  const cols = FEEDING_TABLE.weightCols;
+  let wIdx = 0;
+  for (let i = 0; i < cols.length; i++) {
+    if (weightG <= cols[i].max) { wIdx = i; break; }
+  }
+
+  const closestTemp = temps[tIdx];
+  const rate = FEEDING_TABLE.rates[closestTemp][wIdx];
+  const label = cols[wIdx].label;
+
+  return { temp: closestTemp, rate, label, diff: Math.abs(closestTemp - temp) };
+}
+
 // ============ 领域检测 ============
 
 const DOMAIN_PATTERNS = [
@@ -117,41 +175,45 @@ function _parseQueryParams(query) {
  */
 function _findRelevantInfo(results, qParams) {
   const lines = [];
+  const seen = new Set();
   let srcIdx = 0;
 
   for (const r of results) {
     srcIdx++;
     const text = r.text || '';
 
-    // 如果用户问了水温+体重 → 在文本中找匹配的行
+    // 如果用户问了水温+体重 → 查投饲率表
     if (qParams.temp && qParams.weight) {
-      // 在投饲率矩阵中找接近的水温和体重
       const relevant = _extractFeedingRateLine(text, qParams.temp, qParams.weight);
       if (relevant) {
-        lines.push(relevant + ` [来源:${srcIdx}]`);
+        const key = relevant.substring(0, 60); // 去重
+        if (!seen.has(key)) {
+          seen.add(key);
+          lines.push(relevant + ` [来源:${srcIdx}]`);
+        }
         continue;
       }
-      // 退一步：找包含该水温的投饲率信息
       const tempLine = _findTempMatch(text, qParams.temp);
-      if (tempLine) {
+      if (tempLine && !seen.has(tempLine.substring(0, 40))) {
+        seen.add(tempLine.substring(0, 40));
         lines.push(tempLine + ` [来源:${srcIdx}]`);
         continue;
       }
     }
 
-    // 如果只问了水温
     if (qParams.temp && !qParams.weight) {
       const tempLine = _findTempMatch(text, qParams.temp);
-      if (tempLine) {
+      if (tempLine && !seen.has(tempLine.substring(0, 40))) {
+        seen.add(tempLine.substring(0, 40));
         lines.push(tempLine + ` [来源:${srcIdx}]`);
         continue;
       }
     }
 
-    // 如果问了溶氧
     if (qParams.do) {
       const doLine = _findDoMatch(text, qParams.do);
-      if (doLine) {
+      if (doLine && !seen.has(doLine.substring(0, 40))) {
+        seen.add(doLine.substring(0, 40));
         lines.push(doLine + ` [来源:${srcIdx}]`);
         continue;
       }
@@ -162,52 +224,26 @@ function _findRelevantInfo(results, qParams) {
 }
 
 /**
- * 在投饲率矩阵表格中找接近水温+体重的行，返回可读的投饲率建议
+ * 查投饲率表并返回格式化结果
+ * 数据来源: 《水产动物营养与饲料学》虹鳟投饲率标准表
  */
 function _extractFeedingRateLine(text, temp, weight) {
-  // 找文本中的投饲率表格数据
-  const lines = text.split('\n');
-  const feedingData = [];
+  const result = _lookupFeedingRate(temp, weight);
+  if (!result) return null;
 
-  for (const line of lines) {
-    // 匹配表格行: | 15℃ | 3.0 | 5.8 | ... (水温行)
-    const tempRow = line.match(/^\|\s*(\d{1,2})\s*[℃C°]?\s*\|/);
-    if (tempRow) {
-      const cells = line.split('|').map(c => c.trim()).filter(c => c && !c.match(/^[-:]+$/));
-      if (cells.length >= 3) {
-        feedingData.push({ temp: parseFloat(cells[0]), values: cells.slice(1).map(v => parseFloat(v)) });
-      }
-    }
+  const dailyFeed = ((weight * result.rate) / 100).toFixed(1);
+  const note = result.diff > 0 ? `（最接近水温 ${result.temp}℃）` : '';
+
+  let answer = `水温 **${result.temp}℃**、体重 **${weight}g**（${result.label}）→ 投饲率约 **${result.rate}%**，日投喂量约 **${dailyFeed}g/尾** ${note}`;
+
+  // 大鱼修正 (>10g)
+  if (weight > 10) {
+    const adjusted = (result.rate * 0.84).toFixed(1);
+    const adjustedFeed = ((weight * parseFloat(adjusted)) / 100).toFixed(1);
+    answer += `\n- ⚠️ 鱼体重 >10g，需乘以修正系数 0.84：校正投饲率 **${adjusted}%**，校正日投喂量 **${adjustedFeed}g/尾**`;
   }
 
-  if (feedingData.length === 0) return null;
-
-  // 找最接近的水温行
-  const closest = feedingData.reduce((best, row) =>
-    Math.abs(row.temp - temp) < Math.abs(best.temp - temp) ? row : best
-  );
-
-  if (Math.abs(closest.temp - temp) > 5) return null; // 差异太大不显示
-
-  // 尝试根据体重找到对应的投饲率列
-  // 体重级参考: <0.18, 0.18-1.5, 1.5-5.1, 5.1-12, 12-23, 23-39, 39-62, 62-92, 92-130, 130-180, >180 (单位g)
-  let weightIdx = -1;
-  if (weight >= 130) weightIdx = 9;
-  else if (weight >= 92) weightIdx = 8;
-  else if (weight >= 62) weightIdx = 7;
-  else if (weight >= 39) weightIdx = 6;
-  else if (weight >= 23) weightIdx = 5;
-  else if (weight >= 12) weightIdx = 4;
-  else if (weight >= 5.1) weightIdx = 3;
-  else if (weight >= 1.5) weightIdx = 2;
-  else if (weight >= 0.18) weightIdx = 1;
-  else weightIdx = 0;
-
-  const rate = closest.values[weightIdx];
-  if (rate === undefined || isNaN(rate)) return null;
-
-  const dailyFeed = ((weight * rate) / 100).toFixed(1);
-  return `水温 **${closest.temp}℃**、体重 **${weight}g** 时，投饲率约 **${rate}%**，日投喂量约 **${dailyFeed}g/尾**`;
+  return answer;
 }
 
 /**
