@@ -52,53 +52,75 @@ function isInDomain(query) {
 
 /**
  * 从知识库检索结果构建简洁回答
- * 只输出关键信息 + [来源:N] 标注，不展示检索元数据
+ * 只提炼关键信息，不堆砌原文
  */
 function _buildKBAnswer(query, results, sources) {
   if (!results || results.length === 0) {
     return _outOfScopeAnswer('no_match');
   }
 
+  const allText = results.map(r => r.text || '').join('\n');
   let answer = '';
 
-  // 提取并展示关键数值参数
-  const allText = results.map(r => r.text || '').join('\n');
+  // 1. 提取关键数值参数
   const params = _extractKeyParams(allText);
-
   if (params.length > 0) {
-    answer += '**📊 关键数据**\n';
-    for (const p of params.slice(0, 8)) {
-      answer += `- ${p}\n`;
-    }
+    answer += params.slice(0, 5).map(p => `- ${p}`).join('\n');
     answer += '\n';
   }
 
-  // 整理核心信息点：提取最相关的片段，标注来源
-  answer += '**📋 相关内容**\n';
+  // 2. 智能提炼：从每个结果取一句最像"信息陈述"的话（过滤掉表格/列表行）
+  const points = [];
   const seen = new Set();
-  let pointIdx = 0;
 
-  for (let i = 0; i < Math.min(results.length, 6); i++) {
+  for (let i = 0; i < Math.min(results.length, 5); i++) {
     const r = results[i];
-    // 提取 2-3 句关键信息（取前 300 字的首句和关键句）
-    const sentences = r.text.split(/[。.；;！!？?\n]/).filter(s => s.trim().length > 8);
-    const keySentences = sentences.slice(0, 2).map(s => s.trim()).join('；');
-
-    if (keySentences && !seen.has(keySentences.substring(0, 50))) {
-      seen.add(keySentences.substring(0, 50));
-      pointIdx++;
-      answer += `${pointIdx}. ${keySentences} [来源:${i + 1}]\n`;
+    const cleaned = _extractInfoSentence(r.text);
+    if (cleaned && cleaned.length > 5 && !seen.has(cleaned.substring(0, 40))) {
+      seen.add(cleaned.substring(0, 40));
+      points.push(`${cleaned} [来源:${i + 1}]`);
     }
   }
 
-  // 如果结果多于展示的，提示
-  if (results.length > 6) {
-    answer += `\n_…共检索到 ${results.length} 条相关内容，点击下方来源卡片查看全部_\n`;
+  if (points.length > 0) {
+    for (let i = 0; i < points.length; i++) {
+      answer += `${i + 1}. ${points[i]}\n`;
+    }
   }
 
-  answer += `\n💡 点击 [来源:N] 可查看详细原文出处。`;
-
   return answer;
+}
+
+/**
+ * 从文本中提取一句干净的信息陈述
+ * 跳过表格行(|...|)、标题行(#)、FAQ标记、纯列表等
+ */
+function _extractInfoSentence(text) {
+  if (!text) return '';
+
+  // 按句号、换行拆分，过滤掉噪音行
+  const lines = text.split(/[。.\n]/).map(s => s.trim()).filter(s => {
+    if (s.length < 10 || s.length > 120) return false;
+    if (/^\s*#/.test(s)) return false;                 // 标题
+    if (/^\s*\|/.test(s) || /\|\s*$/.test(s)) return false;  // 表格行
+    if (/^\s*[-*•●]\s/.test(s) && s.length < 30) return false; // 短列表
+    if (/Q\d+[:：]/.test(s)) return false;              // FAQ 标记
+    if (/^[①②③④⑤⑥⑦⑧⑨⑩]/.test(s)) return false;      // 编号列表
+    if (/第[一二三四五六七八九十]章/.test(s)) return false;  // 章节标题
+    return true;
+  });
+
+  // 返回第一条有效的信息句
+  for (const line of lines) {
+    const cleaned = line
+      .replace(/^\d+[\.\、\)）]\s*/, '')  // 去掉编号
+      .replace(/^[-*•●]\s*/, '')          // 去掉列表标记
+      .replace(/\*\*/g, '')               // 去掉加粗标记
+      .trim();
+    if (cleaned.length >= 10) return cleaned;
+  }
+
+  return '';
 }
 
 /**
