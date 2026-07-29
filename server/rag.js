@@ -212,10 +212,11 @@ function _extractFromTable(results, keywords) {
 
 function _extractKeywords(query) {
   const cleaned = query
-    .replace(/吗|呢|啊|吧|什么|怎么|怎样|如何|多少|哪|请|问|一下|帮我|告诉|应该|需要|可以|还是/g, ' ')
-    .replace(/[？?！!，,。.]/g, ' ');
+    .replace(/我的|最近|可能|什么|怎么|怎样|如何|多少|哪|请|问|一下|帮我|告诉|应该|需要|可以|还是|吗|呢|啊|吧|这是|那个|现在|已经|发现|出现|开始|这个|如果|因为|所以|但是/g, ' ')
+    .replace(/[？?！!，,。.：:]/g, ' ');
   const words = cleaned.match(/[一-鿿]{2,3}|[a-zA-Z]{2,}|\d+\.?\d*/g) || [];
-  const result = [...new Set(words)].filter(w => w.length >= 2);
+  const junkWords = /^(我的|最近|可能|什么|怎么|这是|那个|现在|已经|发现|出现|开始|还是|应该|需要|可以|一下|这个|如果|因为|所以|但是|或者|而且|关于|对于|以及|不过|一般|那种|各种|不同|一样|一些|一点|比较|非常|特别|基本|主要|重要)$/;
+  const result = [...new Set(words)].filter(w => w.length >= 2 && !junkWords.test(w));
 
   // 补充拆分
   const extra = [];
@@ -240,9 +241,11 @@ function _extractKeywords(query) {
     '生长': ['growth', 'SGR'],
     '应激': ['stress', 'cortisol'],
     '缺氧': ['hypoxia', 'low oxygen', 'low DO'],
+    '不吃食': ['拒食', '厌食', '摄食差', '摄食减少'],
+    '不吃': ['拒食', '厌食'],
   };
   for (const [cn, ens] of Object.entries(synonymMap)) {
-    if (result.some(w => w.includes(cn) || cn.includes(w))) {
+    if (result.some(w => w.includes(cn) || cn.includes(w)) || query.includes(cn)) {
       extra.push(...ens);
     }
   }
