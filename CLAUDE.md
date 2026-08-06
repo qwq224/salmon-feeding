@@ -23,7 +23,7 @@
 | MOD | `server/server.js` | Webhook 简化端点增加领域拒绝话术 |
 | MOD | `server/webhook-handler.js` | 企微/飞书回复增加领域外拒绝处理 |
 | MOD | `server/crawler.js` | **知识库扩充**: 新增5篇内置文档(RAS系统/经济分析/苗种培育/收获加工/标准法规)、新增6组爬虫源(Nofima/FAO深度/水产养殖网/MDPI等)、修复 Semantic Scholar 查询缺失 Bug、新增 User-Agent 轮换、增加请求延迟和超时 |
-| MOD | `js/app.js` | 移除联网搜索开关相关代码(`toggleWebSearch`/`webSearchEnabled`/`searchLabel`) |
+| MOD | `server/rag.js` | v7: 意图分类(`_classifyIntent`) + 定向提取(`_buildTargetedAnswer`) + 回答质检(`_validateAnswer`) + 关键词bigram拆分 |
 | MOD | `index.html` | 移除联网搜索按钮 |
 | MOD | `CLAUDE.md` | 更新状态: rag.js v6 纯KB模式 + 知识库扩充完成 |
 

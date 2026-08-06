@@ -2025,6 +2025,119 @@ input.valid {
   #bottomNav {
     display: flex !important;
   }
+
+  /* Toast constrain */
+  .toast {
+    max-width: calc(100vw - 40px);
+    right: 10px;
+    left: 10px;
+    font-size: 12px;
+    padding: 12px 16px;
+  }
+
+  /* Form inputs full width */
+  .form-group input,
+  .form-group select {
+    width: 100%;
+  }
+
+  /* Hero */
+  .hero { padding: 24px 16px; }
+  .hero-title { font-size: 20px; }
+  .hero-icon { font-size: 48px; }
+
+  /* Records filter stack */
+  .records-filter {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .records-filter select,
+  .records-filter input {
+    width: 100%;
+    min-width: auto;
+  }
+  .records-filter .filter-tag {
+    align-self: flex-start;
+  }
+
+  /* Quick add stack */
+  .quick-add {
+    flex-direction: column;
+  }
+  .records-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* Modal */
+  .modal-card {
+    width: 95%;
+    padding: 18px;
+  }
+  .modal-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Settings */
+  .setting-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .setting-row input,
+  .setting-row select {
+    width: 100%;
+  }
+
+  /* Chat input */
+  .chat-input {
+    flex-direction: column;
+  }
+
+  /* Hero cards */
+  .hero-card b { font-size: 24px; }
+
+  /* Records stats */
+  .records-stats { gap: 6px; }
+  .rstat { min-width: 60px; padding: 8px 6px; }
+  .rstat b { font-size: 14px; }
+
+  /* Chart heights */
+  .chart-box-lg { height: 280px; }
+  .chart-box { height: 220px; }
+
+  /* Touch targets */
+  .btn-xs {
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  /* Calc layout */
+  .calc-layout { max-width: 100%; }
+
+  /* Page header */
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  /* Top bar search */
+  .top-bar .search-wrapper {
+    max-width: 100%;
+    flex: 1;
+  }
+  .search-shortcut { display: none; }
+
+  /* Bottom nav safe area */
+  #bottomNav {
+    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Data management buttons */
+  .settings-layout .card > div[style] {
+    flex-direction: column;
+  }
 }
 
 /* ================================================================
@@ -2168,4 +2281,174 @@ details summary {
 
 details summary:hover {
   color: #7abfff;
+}
+
+/* ================================================================
+   RESPONSIVE — Small Phones (≤480px)
+   ================================================================ */
+@media (max-width: 480px) {
+  .stat-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  .stat-card {
+    padding: 14px 10px;
+  }
+  .stat-card .num {
+    font-size: 22px;
+  }
+
+  .quick-grid {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .recent-teaser {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .recent-teaser .rt-item {
+    padding: 10px 8px;
+  }
+  .recent-teaser .rt-item .rt-val {
+    font-size: 15px;
+  }
+
+  .hero {
+    padding: 20px 12px;
+  }
+  .hero-icon { font-size: 40px; }
+  .hero-title { font-size: 18px; }
+  .hero-sub { font-size: 10px; letter-spacing: 2px; }
+
+  #app {
+    padding: 12px 8px 90px;
+  }
+
+  .card {
+    padding: 16px 12px;
+  }
+
+  .card h3 {
+    font-size: 14px;
+  }
+
+  .param-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .param-card {
+    padding: 10px 8px;
+    min-height: 64px;
+  }
+  .param-card b { font-size: 14px; }
+  .param-card small { font-size: 9px; }
+
+  .method-row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .method-row .method-mini {
+    padding: 10px 6px;
+  }
+  .method-row .method-mini .mm-rate {
+    font-size: 18px;
+  }
+
+  .chart-box-lg { height: 220px; }
+  .chart-box { height: 180px; }
+
+  .kb-grid {
+    gap: 8px;
+  }
+
+  .dash-hero {
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .hero-card {
+    padding: 12px 8px;
+    flex: 1 1 45%;
+    min-width: 0;
+  }
+  .hero-card b { font-size: 20px; }
+
+  .chat-box {
+    padding: 12px;
+    min-height: 300px;
+    max-height: 50vh;
+  }
+  .chat-msg {
+    max-width: 90%;
+    padding: 10px 14px;
+    font-size: 12px;
+  }
+  .chat-msg.user {
+    max-width: 85%;
+  }
+
+  .quick-asks button {
+    font-size: 11px;
+    padding: 5px 10px;
+  }
+
+  .modal-card {
+    width: 98%;
+    padding: 14px;
+    border-radius: var(--radius-sm);
+  }
+  .modal-card h4 {
+    font-size: 14px;
+  }
+
+  .btn {
+    padding: 10px 16px;
+    font-size: 12px;
+  }
+
+  table { font-size: 11px; }
+  th, td { padding: 8px 6px; }
+
+  .toast {
+    top: 10px;
+    right: 6px;
+    left: 6px;
+    max-width: none;
+    font-size: 11px;
+    padding: 10px 14px;
+  }
+
+  #bottomNav {
+    padding: 4px 0 10px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+  .nav-btn {
+    padding: 2px 4px;
+    font-size: 8px;
+  }
+  .nav-btn .nav-icon {
+    font-size: 18px;
+  }
+
+  .setting-row {
+    font-size: 12px;
+  }
+
+  .records-stats {
+    gap: 4px;
+  }
+  .rstat {
+    padding: 6px 4px;
+  }
+  .rstat b {
+    font-size: 13px;
+  }
+
+  .result-box .val {
+    font-size: 24px;
+  }
+
+  .page-header h2 {
+    font-size: 17px;
+  }
 }
